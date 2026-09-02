@@ -69,6 +69,11 @@ def dapatkan_masa_sebenar():
 
 def baca_penggunaan_registry(masa_semasa):
     hari_ini = str(datetime.date.today())
+    
+    # Abaikan carian Windows Registry jika berjalan di Streamlit Cloud (Linux)
+    if winreg is None:
+        return {"jumlah": 0, "tarikh": hari_ini, "tamper_jam": False}
+
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
         jumlah, _ = winreg.QueryValueEx(key, "Jumlah")

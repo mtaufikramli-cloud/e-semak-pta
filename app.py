@@ -39,7 +39,7 @@ def paparkan_footer_maklumat():
 DEV_BYPASS_LIMIT = False    # True = Abaikan had upload PDF (boleh upload unlimit)
 DEV_BYPASS_EXPIRED = False  # True = Abaikan tarikh luput (lesen sentiasa aktif)
 
-HAD_HARIAN = 20
+HAD_HARIAN = 2
 
 # TETAPAN TARIKH & MASA LUPUT (Tahun, Bulan, Hari, Jam, Minit, Saat)
 # Uji tarikh/masa tertentu di sini:

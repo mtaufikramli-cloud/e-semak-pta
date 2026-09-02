@@ -43,7 +43,7 @@ HAD_HARIAN = 2
 
 # TETAPAN TARIKH & MASA LUPUT (Tahun, Bulan, Hari, Jam, Minit, Saat)
 # Uji tarikh/masa tertentu di sini:
-MASA_LUPUT = datetime.datetime(2026, 9, 3, 1, 00, 0) # Contoh: 3 Sept 2026, 1:00:00 AM
+MASA_LUPUT = datetime.datetime(2026, 9, 2, 1, 00, 0) # Contoh: 3 Sept 2026, 1:00:00 AM
 
 SECRET_KEY = "KVNT_MIPAC_2026_SECRET"
 REG_PATH = r"Software\eSemakPTA\UsageData"

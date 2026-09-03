@@ -15,7 +15,7 @@ try:
 except ImportError:
     winreg = None
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import time
 
 # URL Webhook Google Apps Script anda
@@ -31,8 +31,10 @@ def hantar_log_penggunaan(
     total_errors,
 ):
   """Menghantar log pemprosesan PDF terus ke Google Sheets di latar belakang secara senyap."""
+# Tetapkan zon masa Malaysia (UTC+8)
+  tz_my = timezone(timedelta(hours=8))
   data_log = {
-      "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+      "timestamp": datetime.now(tz_my).strftime("%Y-%m-%d %H:%M:%S"),
       "environment": environment,
       "filename": filename,
       "file_size_mb": file_size_mb,

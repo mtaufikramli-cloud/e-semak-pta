@@ -580,7 +580,7 @@ if uploaded_file is not None:
     st.success(f"Fail '{uploaded_file.name}' Berjaya Diimbas! Baki semakan harian: {HAD_HARIAN - rekod_penggunaan['jumlah']}")
     st.success(f"Jumlah muka surat: {len(doc)}")
 
-    # TAMBAH BARIS NI DI SINI (Mula kira masa imbasan)
+    # Mula kira masa imbasan
     start_time = time.time()
 
     if "ignored_errors" not in st.session_state:
@@ -912,66 +912,7 @@ if uploaded_file is not None:
     )
 
     # =========================================================================
-    # 📄 SEKSYEN JANA & MUAT TURUN DOKUMEN (DIPINDAHKAN KE ATAS UNTUK MESRA UX)
-    # =========================================================================
-    st.markdown("---")
-    st.subheader("📄 Jana & Muat Turun Dokumen Akhir")
-
-    st.write(
-        f"Jumlah isu aktif yang disahkan untuk dilaporkan: **{len(detected_issues)} isu**"
-    )
-
-    if st.button(
-        "⚙️ Jana Dokumen PDF Akhir",
-        type="primary",
-        use_container_width=True,
-    ):
-        with st.spinner("Menjana fail PDF akhir... Sila tunggu sebentar."):
-            st.session_state.report_pdf_bytes = generate_pdf_report(
-                detected_issues, len(doc)
-            )
-            st.session_state.annotated_pdf_bytes = generate_annotated_thesis(
-                doc, all_pages_errors_list, st.session_state.ignored_errors
-            )
-        st.success("Fail PDF telah sedia untuk dimuat turun!")
-
-    if (
-        st.session_state.report_pdf_bytes is not None
-        and st.session_state.annotated_pdf_bytes is not None
-    ):
-        col_down1, col_down2 = st.columns(2)
-
-        with col_down1:
-            btn_html_1 = create_download_button_html(
-                st.session_state.report_pdf_bytes,
-                "Laporan_Semakan_Format_PTA_KV.pdf",
-                "📥 1. Muat Turun Laporan Ringkasan (PDF)",
-                color="#2563eb",
-            )
-            st.markdown(btn_html_1, unsafe_allow_html=True)
-
-        with col_down2:
-            btn_html_2 = create_download_button_html(
-                st.session_state.annotated_pdf_bytes,
-                "Laporan_PTA_Visual_Kotak_Ralat.pdf",
-                "📥 2. Muat Turun Laporan PTA Visual Berkotak (PDF)",
-                color="#059669",
-            )
-            st.markdown(btn_html_2, unsafe_allow_html=True)
-
-    # --- C. PAPARKAN BUTANG KAJI SELIDIK GOOGLE FORM ---
-    st.markdown("---")
-    st.subheader("📋 Kaji Selidik & Maklum Balas Pengguna")
-    st.info("Sila luangkan masa 1 minit untuk menilai pengalaman penggunaan e-Semak PTA demi penambahbaikan berterusan.")
-    
-    st.link_button(
-        "⭐ Isi Borang Kaji Selidik Pengguna",
-        "https://forms.gle/C4sLEf1zmCrbneqT8",
-        type="primary"
-    )
-
-    # =========================================================================
-    # 🔍 PRATONTON VISUAL PER MUKA SURAT
+    # 🔍 PRATONTON VISUAL PER MUKA SURAT (DIPINDAHKAN KE ATAS)
     # =========================================================================
     st.markdown("---")
     st.subheader("🔍 Mod Semakan & Pratonton Visual")
@@ -1030,6 +971,68 @@ if uploaded_file is not None:
                             on_change=toggle_bypass,
                             args=(err_id,),
                         )
+
+    # =========================================================================
+    # 📄 SEKSYEN JANA & MUAT TURUN DOKUMEN AKHIR (DIPINDAHKAN KE BAWAH)
+    # =========================================================================
+    st.markdown("---")
+    st.subheader("📄 Jana & Muat Turun Dokumen Akhir")
+
+    st.write(
+        f"Jumlah isu aktif yang disahkan untuk dilaporkan: **{len(detected_issues)} isu**"
+    )
+
+    if st.button(
+        "⚙️ Jana Dokumen PDF Akhir",
+        type="primary",
+        use_container_width=True,
+    ):
+        with st.spinner("Menjana fail PDF akhir... Sila tunggu sebentar."):
+            st.session_state.report_pdf_bytes = generate_pdf_report(
+                detected_issues, len(doc)
+            )
+            st.session_state.annotated_pdf_bytes = generate_annotated_thesis(
+                doc, all_pages_errors_list, st.session_state.ignored_errors
+            )
+        st.success("Fail PDF telah sedia untuk dimuat turun!")
+
+    if (
+        st.session_state.report_pdf_bytes is not None
+        and st.session_state.annotated_pdf_bytes is not None
+    ):
+        col_down1, col_down2 = st.columns(2)
+
+        with col_down1:
+            btn_html_1 = create_download_button_html(
+                st.session_state.report_pdf_bytes,
+                "Laporan_Semakan_Format_PTA_KV.pdf",
+                "📥 1. Muat Turun Laporan Ringkasan (PDF)",
+                color="#2563eb",
+            )
+            st.markdown(btn_html_1, unsafe_allow_html=True)
+
+        with col_down2:
+            btn_html_2 = create_download_button_html(
+                st.session_state.annotated_pdf_bytes,
+                "Laporan_PTA_Visual_Kotak_Ralat.pdf",
+                "📥 2. Muat Turun Laporan PTA Visual Berkotak (PDF)",
+                color="#059669",
+            )
+            st.markdown(btn_html_2, unsafe_allow_html=True)
+
+    # =========================================================================
+    # 📋 KAJI SELIDIK & MAKLUM BALAS PENGGUNA (DIPINDAHKAN KE BAWAH)
+    # =========================================================================
+    st.markdown("---")
+    st.subheader("📋 Kaji Selidik & Maklum Balas Pengguna")
+    st.info("Sila luangkan masa 1 minit untuk menilai pengalaman penggunaan e-Semak PTA demi penambahbaikan berterusan.")
+    
+    st.link_button(
+        "⭐ Isi Borang Kaji Selidik Pengguna",
+        "https://forms.gle/C4sLEf1zmCrbneqT8",
+        type="primary",
+        use_container_width=True
+    )
 
     # ==================== BUTANG KEMBALI KE ATAS ====================
     st.markdown("---")

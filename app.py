@@ -917,6 +917,9 @@ if uploaded_file is not None:
     # 🔍 PRATONTON VISUAL PER MUKA SURAT (DIPINDAHKAN KE ATAS)
     # =========================================================================
     st.markdown("---")
+    st.write(
+        f"Jumlah isu aktif yang disahkan untuk dilaporkan: **{len(detected_issues)} isu**"
+    )
     st.subheader("🔍 Mod Semakan & Pratonton Visual")
 
     for page_num in range(len(doc)):

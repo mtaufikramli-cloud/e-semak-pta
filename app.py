@@ -15,6 +15,45 @@ try:
 except ImportError:
     winreg = None
 import urllib.request
+from datetime import datetime
+import time
+
+# URL Webhook Google Apps Script anda
+GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzwPKVtYzYVjCTapGcowr1QkD50QypFEuaL-JpRzMTSoz0n6MRTT1JHbpHLQ7LzX50r/exec"
+
+
+def hantar_log_penggunaan(
+    environment,
+    filename,
+    file_size_mb,
+    processing_time_sec,
+    total_pages,
+    total_errors,
+):
+  """Menghantar log pemprosesan PDF terus ke Google Sheets di latar belakang secara senyap."""
+  data_log = {
+      "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+      "environment": environment,
+      "filename": filename,
+      "file_size_mb": file_size_mb,
+      "processing_time_sec": processing_time_sec,
+      "total_pages": total_pages,
+      "total_errors": total_errors,
+  }
+
+  try:
+    req = urllib.request.Request(
+        GOOGLE_WEBHOOK_URL,
+        data=json.dumps(data_log).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    # Hantar log dalam tempoh timeout 2 saat supaya tidak melambatkan UI
+    with urllib.request.urlopen(req, timeout=2.0) as response:
+      pass
+  except Exception:
+    # Abaikan jika ada masalah rangkaian supaya aplikasi pengguna tidak terhenti (crash)
+    pass
 
 # =========================================================
 # TETAPAN MAKLUMAT PENTADBIR & HAK CIPTA (SETEMPAT)
@@ -39,11 +78,11 @@ def paparkan_footer_maklumat():
 DEV_BYPASS_LIMIT = False    # True = Abaikan had upload PDF (boleh upload unlimit)
 DEV_BYPASS_EXPIRED = False  # True = Abaikan tarikh luput (lesen sentiasa aktif)
 
-HAD_HARIAN = 2
+HAD_HARIAN = 20
 
 # TETAPAN TARIKH & MASA LUPUT (Tahun, Bulan, Hari, Jam, Minit, Saat)
 # Uji tarikh/masa tertentu di sini:
-MASA_LUPUT = datetime.datetime(2026, 9, 2, 1, 00, 0) # Contoh: 3 Sept 2026, 1:00:00 AM
+MASA_LUPUT = datetime(2026, 9, 4, 1, 00, 0) # Contoh: 3 Sept 2026, 1:00:00 AM
 
 SECRET_KEY = "KVNT_MIPAC_2026_SECRET"
 REG_PATH = r"Software\eSemakPTA\UsageData"
@@ -63,12 +102,12 @@ def dapatkan_masa_sebenar():
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode())
             masa_str = data['datetime'][:19]
-            return datetime.datetime.fromisoformat(masa_str)
+            return datetime.fromisoformat(masa_str)
     except Exception:
-        return datetime.datetime.now()
+        return datetime.now()
 
 def baca_penggunaan_registry(masa_semasa):
-    hari_ini = str(datetime.date.today())
+    hari_ini = str(masa_sekarang.date())
     
     # Abaikan carian Windows Registry jika berjalan di Streamlit Cloud (Linux)
     if winreg is None:
@@ -82,7 +121,7 @@ def baca_penggunaan_registry(masa_semasa):
         # Semak LastRun secara selamat (elak ralat jika kunci belum wujud)
         try:
             last_run_str, _ = winreg.QueryValueEx(key, "LastRun")
-            masa_terakhir = datetime.datetime.fromisoformat(last_run_str)
+            masa_terakhir = datetime.fromisoformat(last_run_str)
         except FileNotFoundError:
             masa_terakhir = None
             
@@ -490,7 +529,6 @@ def generate_annotated_thesis(doc_input, all_pages_errors, ignored_set):
     annotated_doc.close()
     return out_buffer.getvalue()
 
-
 def create_download_button_html(
     file_bytes, filename, button_text, color="#2563eb"
 ):
@@ -541,6 +579,9 @@ if uploaded_file is not None:
             
     st.success(f"Fail '{uploaded_file.name}' Berjaya Diimbas! Baki semakan harian: {HAD_HARIAN - rekod_penggunaan['jumlah']}")
     st.success(f"Jumlah muka surat: {len(doc)}")
+
+    # TAMBAH BARIS NI DI SINI (Mula kira masa imbasan)
+    start_time = time.time()
 
     if "ignored_errors" not in st.session_state:
         st.session_state.ignored_errors = set()
@@ -629,7 +670,7 @@ if uploaded_file is not None:
                 else:
                     # Kawasan Portrait (GP PTA 2026: Berada di Bahagian Bawah Penjuru Sebelah Kanan)
                     if wy0 > (rect.height - 100):  # Berada di zon footer
-                        # Nombor sepatutnya berada di kawasan 65% hingga 100% lebar kertas (Sebelah Kanan)
+                        # Nombor sepatutnya berada di kawasan 60% hingga 100% lebar kertas (Sebelah Kanan)
                         right_min = rect.width * 0.60  
 
                         if wx0 >= right_min:
@@ -818,7 +859,6 @@ if uploaded_file is not None:
             k in page_text_lower for k in ["list of publications", "publication"]
         )
 
-        # PEMBETULAN DI SINI: Menyertakan abaikan_pagenum_appendix ke dalam syarat pengecualian
         skip_pagenum_check = (in_appendix_section and abaikan_pagenum_appendix) or is_other_exempted
 
         if page_num >= 2 and not skip_pagenum_check and not has_pagenum_found:
@@ -844,6 +884,32 @@ if uploaded_file is not None:
             err_id = f"p{page_num+1}_{i}"
             if err_id not in st.session_state.ignored_errors:
                 detected_issues.append({"page": page_num + 1, "msg": err["msg"]})
+
+    # =========================================================
+    # AUTOMATIK: METRIK, LOGGING & KAJI SELIDIK
+    # =========================================================
+
+    # --- A. AMBIL METRIK PEMPROSESAN ---
+    try:
+        import winreg
+        env_type = "Local (Windows)"
+    except ImportError:
+        env_type = "Online (Cloud)"
+
+    saiz_mb = round(len(uploaded_file.getvalue()) / (1024 * 1024), 2)
+    masa_proses = round(time.time() - start_time, 2) if 'start_time' in locals() else 0.0
+    jumlah_ms = len(doc)
+    jumlah_ralat = len(detected_issues)
+
+    # --- B. HANTAR LOG KE GOOGLE SHEETS AUTOMATIK ---
+    hantar_log_penggunaan(
+        environment=env_type,
+        filename=uploaded_file.name,
+        file_size_mb=saiz_mb,
+        processing_time_sec=masa_proses,
+        total_pages=jumlah_ms,
+        total_errors=jumlah_ralat
+    )
 
     # =========================================================================
     # 📄 SEKSYEN JANA & MUAT TURUN DOKUMEN (DIPINDAHKAN KE ATAS UNTUK MESRA UX)
@@ -892,6 +958,17 @@ if uploaded_file is not None:
                 color="#059669",
             )
             st.markdown(btn_html_2, unsafe_allow_html=True)
+
+    # --- C. PAPARKAN BUTANG KAJI SELIDIK GOOGLE FORM ---
+    st.markdown("---")
+    st.subheader("📋 Kaji Selidik & Maklum Balas Pengguna")
+    st.info("Sila luangkan masa 1 minit untuk menilai pengalaman penggunaan e-Semak PTA demi penambahbaikan berterusan.")
+    
+    st.link_button(
+        "⭐ Isi Borang Kaji Selidik Pengguna",
+        "https://forms.gle/C4sLEf1zmCrbneqT8",
+        type="primary"
+    )
 
     # =========================================================================
     # 🔍 PRATONTON VISUAL PER MUKA SURAT

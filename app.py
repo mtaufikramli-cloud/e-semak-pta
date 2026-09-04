@@ -17,10 +17,25 @@ except ImportError:
 import urllib.request
 from datetime import datetime, timezone, timedelta
 import time
+import threading
+import requests
 
 # URL Webhook Google Apps Script anda
-GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzwPKVtYzYVjCTapGcowr1QkD50QypFEuaL-JpRzMTSoz0n6MRTT1JHbpHLQ7LzX50r/exec"
+GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzODbqg8fx4wduxDmbjhFdzzj_k6xkIsb0oMo9FR10UKkXs0tVmt6HyIakaLmmaSORc/exec"
 
+def _proses_hantar_background(data_log):
+    """Fungsi pembantu yang berjalan di latar belakang (background thread)."""
+    try:
+        # requests mengendalikan HTTP 302 Redirect Google Apps Script secara automatik
+        response = requests.post(
+            GOOGLE_WEBHOOK_URL,
+            json=data_log,
+            headers={"Content-Type": "application/json"},
+            timeout=10.0  # Masa yang cukup untuk pelayan Google memproses
+        )
+        print(f"[Log Google Sheets] Status Penghantaran: {response.status_code}")
+    except Exception as e:
+        print(f"[Ralat Webhook Log]: {e}")
 
 def hantar_log_penggunaan(
     environment,
@@ -30,48 +45,40 @@ def hantar_log_penggunaan(
     total_pages,
     total_errors,
 ):
-  """Menghantar log pemprosesan PDF terus ke Google Sheets di latar belakang secara senyap."""
-# Tetapkan zon masa Malaysia (UTC+8)
-  tz_my = timezone(timedelta(hours=8))
-  data_log = {
-      "timestamp": datetime.now(tz_my).strftime("%Y-%m-%d %H:%M:%S"),
-      "environment": environment,
-      "filename": filename,
-      "file_size_mb": file_size_mb,
-      "processing_time_sec": processing_time_sec,
-      "total_pages": total_pages,
-      "total_errors": total_errors,
-  }
+    """Menghantar log pemprosesan PDF terus ke Google Sheets di latar belakang secara senyap."""
+    tz_my = timezone(timedelta(hours=8))
+    data_log = {
+        "timestamp": datetime.now(tz_my).strftime("%Y-%m-%d %H:%M:%S"),
+        "environment": environment,
+        "filename": filename,
+        "file_size_mb": file_size_mb,
+        "processing_time_sec": processing_time_sec,
+        "total_pages": total_pages,
+        "total_errors": total_errors,
+    }
 
-  try:
-    req = urllib.request.Request(
-        GOOGLE_WEBHOOK_URL,
-        data=json.dumps(data_log).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    # Hantar log dalam tempoh timeout 2 saat supaya tidak melambatkan UI
-    with urllib.request.urlopen(req, timeout=2.0) as response:
-      pass
-  except Exception:
-    # Abaikan jika ada masalah rangkaian supaya aplikasi pengguna tidak terhenti (crash)
-    pass
+    # Hantar log melalui Thread berasingan supaya UI aplikasi serta-merta lancar
+    thread = threading.Thread(target=_proses_hantar_background, args=(data_log,))
+    thread.start()
 
 # =========================================================
 # TETAPAN MAKLUMAT PENTADBIR & HAK CIPTA (SETEMPAT)
 # =========================================================
 def paparkan_footer_maklumat():
     """Fungsi setempat untuk memaparkan maklumat penyeragaman hak cipta & perhubungan."""
-    st.markdown(
-        """
-        <div style="text-align: center; font-size: 0.85rem; color: #555; padding: 15px; border-top: 1px solid #e0e0e0; margin-top: 30px;">
-            <p style="margin-bottom: 5px;"><strong>© 2026 Ts. Muhammad Taufik Ramli / KV Nibong Tebal. Hak Cipta Terpelihara (All Rights Reserved).</strong></p>
-            <p style="margin-bottom: 5px;">📍 Program Teknologi Elektronik, Kolej Vokasional Nibong Tebal, Jalan Bukit Panchor, 14300 Nibong Tebal, Pulau Pinang</p>
-            <p style="margin-bottom: 0px;">📧 Hubungi Sokongan: <a href="mailto:mtaufikramli@gmail.com">mtaufikramli@gmail.com</a> | 📱 Tel/WhatsApp: +60 13-222 4610</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.markdown("""
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 20px; margin-top: 30px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+        <p style="margin: 0 0 4px 0; font-weight: 700; color: #1e293b; font-size: 0.85rem;">
+            © 2026 Ts. Muhammad Taufik Ramli / KV Nibong Tebal. Hak Cipta Terpelihara.
+        </p>
+        <p style="margin: 0 0 4px 0; color: #64748b; font-size: 0.8rem;">
+            📍 Program Teknologi Elektronik, Kolej Vokasional Nibong Tebal, 14300 Nibong Tebal, Pulau Pinang
+        </p>
+        <p style="margin: 0; color: #64748b; font-size: 0.8rem;">
+            ✉️ Hubungi Sokongan: <a href="mailto:mtaufikramli@gmail.com" style="color: #2563eb; text-decoration: none; font-weight: 600;">mtaufikramli@gmail.com</a> | 📱 Tel/WhatsApp: <span style="font-weight: 600; color: #334155;">+60 13-222 4610</span>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # =========================================================
 # 1. TETAPAN PEMBANGUN (DEVELOPER TESTING TOGGLES)
@@ -80,11 +87,11 @@ def paparkan_footer_maklumat():
 DEV_BYPASS_LIMIT = False    # True = Abaikan had upload PDF (boleh upload unlimit)
 DEV_BYPASS_EXPIRED = False  # True = Abaikan tarikh luput (lesen sentiasa aktif)
 
-HAD_HARIAN = 20
+HAD_HARIAN = 30
 
 # TETAPAN TARIKH & MASA LUPUT (Tahun, Bulan, Hari, Jam, Minit, Saat)
 # Uji tarikh/masa tertentu di sini:
-MASA_LUPUT = datetime(2026, 9, 8, 1, 00, 0) # Contoh: 3 Sept 2026, 1:00:00 AM
+MASA_LUPUT = datetime(2026, 9, 8, 1, 00, 0) # Contoh: 8 Sept 2026, 1:00:00 AM
 
 SECRET_KEY = "KVNT_MIPAC_2026_SECRET"
 REG_PATH = r"Software\eSemakPTA\UsageData"
@@ -168,16 +175,6 @@ if not rekod_penggunaan.get("tamper_jam"):
 
 tarikh_luput_formatted = MASA_LUPUT.strftime("%d/%m/%Y %I:%M:%S %p")
 
-# STATUS DI SIDEBAR
-with st.sidebar:
-    st.divider()
-    if DEV_BYPASS_EXPIRED or DEV_BYPASS_LIMIT:
-        st.warning("🛠️ **DEV MODE ACTIVE**\n"
-                   f"- Bypass Limit: `{'AKTIF' if DEV_BYPASS_LIMIT else 'OFF'}`\n"
-                   f"- Bypass Expired: `{'AKTIF' if DEV_BYPASS_EXPIRED else 'OFF'}`")
-    else:
-        st.caption(f"📅 **Lesen Tamat:** {tarikh_luput_formatted}")
-
 # A. SEKATAN JIKA JAM DIUNDURKAN (ANTI-CLOCK ROLLBACK)
 if not DEV_BYPASS_EXPIRED and rekod_penggunaan.get("tamper_jam"):
     st.error("🚨 **AMARAN KESELAMATAN: JAM SISTEM DIUBAH**")
@@ -229,7 +226,7 @@ if not DEV_BYPASS_LIMIT:
 # Watermark Kredit Kekal di Sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("**e-Semak PTA v1.1**")
-st.sidebar.markdown("Hak Cipta © 2026 KV Nibong Tebal")
+# st.sidebar.markdown("Hak Cipta © 2026 KV Nibong Tebal")
 
 # ==========================================
 # ⚙️ TETAPAN AWAL APPLIKASI STREAMLIT
@@ -263,19 +260,37 @@ def logout():
 
 if not st.session_state.authenticated:
     st.markdown("<div id='top-of-page'></div>", unsafe_allow_html=True)
-    st.title("📄 Semakan Format Laporan PTA (GPPTA KV)")
-    st.caption(f"📌 **Versi Sistem:** {APP_VERSION}")
-    st.markdown("---")
+    
+    # 1. HERO BANNER ATAS (BERGRADIENT BLUE)
+    st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 24px 28px; border-radius: 16px; color: white; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(30, 58, 138, 0.12);">
+            <h1 style="margin: 0; font-size: 1.75rem; font-weight: 800; color: #ffffff; display: flex; align-items: center; gap: 10px;">
+                📄 Semakan Format Laporan PTA (GPPTA KV)
+            </h1>
+            <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 0.88rem; font-weight: 500; color: #e0f2fe;">
+                📌 <b>Versi Sistem:</b> {APP_VERSION}
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
 
+    # 2. RUANG FORM LOG MASUK
     col_login, _ = st.columns([1.5, 1])
     with col_login:
         with st.form("login_form"):
-            st.subheader("🔒 Log Masuk Akses")
+            st.markdown("""
+                <h3 style="margin: 0 0 10px 0; color: #1e293b; font-size: 1.15rem; font-weight: 700;">
+                    🔒 Log Masuk Akses
+                </h3>
+            """, unsafe_allow_html=True)
+            
             password_input = st.text_input(
-                "Masukkan Kata Laluan Akses:", type="password"
+                "Masukkan Kata Laluan Akses:",
+                type="password",
+                placeholder="Masukkan kata laluan di sini...",  # <--- Arahan ringkas dlm kotak
+                help="Hubungi pentadbir jika anda terlupa kata laluan."
             )
             submit_button = st.form_submit_button(
-                "🔑 Log Masuk", use_container_width=True
+                "🔑 Log Masuk", use_container_width=True, type="primary"
             )
 
             if submit_button:
@@ -285,28 +300,74 @@ if not st.session_state.authenticated:
                 else:
                     st.error("🔑 Kata laluan salah. Sila cuba lagi!")
 
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 3. KOTAK PENAFIAN (DISCLAIMER) DENGAN REKA BENTUK MODEN
     st.warning("""
-    ### ⚠️ Penafian (Disclaimer) & Panduan Penggunaan
-    1. **Sistem Bantu Semak Otomatik:** Aplikasi ini dibangunkan sebagai **alat bantuan awal** untuk mengesan ralat format utama.
-    2. **Kelulusan Rasmi:** Keputusan semakan aplikasi ini **bukan penentu mutlak**. Pengguna bertanggungjawab merujuk *Garis Panduan Penulisan Tesis USM* rasmi.
-    3. **Kerahsiaan Fail:** Fail PDF diproses secara *in-memory* dan **tidak disimpan secara kekal**.
+    ### ⚠️ Penafian (Disclaimer) & Panduan Penggunaan Sistem
+
+    1. **Alat Bantuan & Visual Interaktif:**
+    Sistem ini berfungsi sebagai **penyemak automatik peringkat awal** untuk mengesan ralat *margin*, saiz/jenis fon, struktur muka surat, dan tajuk mengikut **GPPTA 2026**.
+
+    2. **Kelulusan & Keputusan Mutlak:**
+    Laporan audit dan paparan visual interaktif yang dijana adalah untuk **tujuan rujukan sahaja**. Keputusan akhir penetapan dan kelulusan format Laporan PTA adalah tertakluk sepenuhnya kepada **Penyelia, Panel Penilai, dan Jawatankuasa PTA KV Nibong Tebal**.
+
+    3. **Kerahsiaan & Keselamatan Data:**
+    Semua fail PDF yang dimuat naik diproses secara *in-memory* (sementara) dan **tidak disimpan dalam mana-mana pelayan (server) atau pangkalan data**. Dokumen anda kekal selamat dan rahsia.
+
+    4. **Sokongan & Maklum Balas:**
+    Jika anda mengesan sebarang ketidakselarian semakan atau ralat teknikal, sila hubungi pentadbir sistem menerusi maklumat perhubungan di bahagian bawah halaman.
     """)
 
-    # ==================== FOOTER HAK CIPTA & DOKUMEN ====================
+    # 4. FOOTER HAK CIPTA
     paparkan_footer_maklumat()
 
     st.stop()
 
 # ==================== SIDEBAR & TETAPAN ====================
 with st.sidebar:
-    st.caption(f"📌 **Versi:** {APP_VERSION}")
-    if st.button("🚪 Log Out", type="secondary", use_container_width=True):
-        logout()
-    st.markdown("---")
-    st.header("⚙️ Tetapan Templat Tesis")
+    # 1. KAD STATUS LESEN
+    if DEV_BYPASS_EXPIRED or DEV_BYPASS_LIMIT:
+        st.warning(
+            "🛠️ **DEV MODE ACTIVE**\n"
+            f"- Bypass Limit: `{'AKTIF' if DEV_BYPASS_LIMIT else 'OFF'}`\n"
+            f"- Bypass Expired: `{'AKTIF' if DEV_BYPASS_EXPIRED else 'OFF'}`"
+        )
+    else:
+        st.markdown(
+            f"""
+            <div style="background-color: #1e293b; padding: 12px 16px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 16px;">
+                <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">STATUS LESEN</div>
+                <div style="font-size: 0.85rem; color: #38bdf8; font-weight: 700; margin-top: 2px;">
+                    🗓️ Tamat: {tarikh_luput_formatted}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    # Set nilai default awal mengikut Piawai GPPTA KV 2026
+    # 2. INFO APLIKASI (SATU SAHAJA DI SINI)
+    st.markdown(
+        f"""
+        <div style="margin-bottom: 12px;">
+            <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #94a3b8;">Hak Cipta © 2026 KV Nibong Tebal</p>
+            <p style="margin: 4px 0 0 0; font-size: 0.75rem; color: #f59e0b; font-weight: 600;">📌 Versi: {APP_VERSION}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 3. BUTANG LOG OUT
+    if st.button("🚪 Log Out", type="secondary", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
+    st.divider()
+
+    # 4. TETAPAN TEMPLAT LAPORAN PTA
+    st.markdown("<h4 style='font-size: 0.95rem; font-weight: 700; color: #ffffff;'>⚙️ Tetapan Templat Laporan PTA</h4>", unsafe_allow_html=True)
+
     default_left, default_right, default_top, default_bottom = 40.0, 25.0, 25.0, 25.0
     default_fonts = ["Arial", "Arial-BoldMT", "ArialMT"]
 
@@ -381,7 +442,7 @@ with st.sidebar:
         help="Semak format tajuk jadual (di atas jadual) dan tajuk rajah (di bawah rajah) mengikut saiz font, jenis font, ketebalan (bold), dan susunan perkataan."
     )
 
-    abaikan_teks_dalam_gambar = st.sidebar.checkbox(
+    abaikan_teks_dalam_gambar = st.checkbox(
         "Abaikan Teks Dalam Gambar / Rajah",
         value=True,
         help="Abaikan ralat font untuk label atau teks yang bertindih di atas gambar/rajah."
@@ -393,11 +454,275 @@ with st.sidebar:
         help="Abaikan semakan jenis dan saiz font untuk semua muka surat di dalam bahagian Lampiran (Appendices)."
     )
 
-    abaikan_pagenum_appendix = st.sidebar.checkbox(
+    abaikan_pagenum_appendix = st.checkbox(
         "Abaikan Semakan No. M/S di Lampiran (Appendices)",
         value=True,
         help="Abaikan semakan kehadiran dan kedudukan nombor muka surat bermula dari tajuk Lampiran utama."
     )
+
+st.markdown("""
+    <style>
+    /* ========================================================= */
+    /* 1. LAYOUT UTAMA & PENGATURAN AM                            */
+    /* ========================================================= */
+    .stApp {
+        background-color: #f8fafc;
+    }
+
+    /* ========================================================= */
+    /* 2. SIDEBAR (DARK CORPORATE THEME)                        */
+    /* ========================================================= */
+    [data-testid="stSidebar"] {
+        background-color: #0f172a !important; /* Dark Navy */
+        border-right: 1px solid #1e293b !important;
+    }
+
+    /* Warna Teks, Tajuk & Label Sidebar */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3, 
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p {
+        color: #f1f5f9 !important;
+    }
+
+    /* Teks Muted & Garisan Pemisah */
+    [data-testid="stSidebar"] .stMarkdown small,
+    [data-testid="stSidebar"] caption {
+        color: #94a3b8 !important;
+    }
+
+    [data-testid="stSidebar"] hr {
+        border-color: #334155 !important;
+        margin: 16px 0 !important;
+    }
+
+    /* Selectbox / Dropdown Dalam Sidebar */
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background-color: #1e293b !important;
+        border-color: #475569 !important;
+        color: #ffffff !important;
+        border-radius: 8px !important;
+    }
+
+    /* Butang Log Out Sidebar (Merah Crimson) */
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: #991b1b !important;
+        color: #ffffff !important;
+        border: 1px solid #dc2626 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background-color: #dc2626 !important;
+        border-color: #ef4444 !important;
+        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3) !important;
+    }
+
+    /* ========================================================= */
+    /* 3. HERO BANNER HEADER & CARDS                              */
+    /* ========================================================= */
+    .header-card {
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 60%, #2563eb 100%);
+        padding: 28px 32px;
+        border-radius: 16px;
+        color: white;
+        margin-bottom: 24px;
+        box-shadow: 0 10px 15px -3px rgba(30, 58, 138, 0.2);
+        position: relative;
+        overflow: hidden;
+    }
+    .header-card h1 {
+        color: #ffffff !important;
+        font-size: 1.85rem !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+        letter-spacing: -0.5px;
+    }
+    .header-card p {
+        color: #93c5fd !important;
+        font-size: 0.95rem;
+        margin-top: 6px !important;
+        margin-bottom: 0 !important;
+        font-weight: 400;
+    }
+
+    /* Feature & Info Cards */
+    .info-grid {
+        display: flex;
+        gap: 16px;
+        margin-top: 20px;
+        margin-bottom: 25px;
+    }
+    .info-card {
+        flex: 1;
+        background: #ffffff;
+        padding: 16px 20px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .info-card-title {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .info-card-desc {
+        font-size: 0.78rem;
+        color: #64748b;
+        margin: 0;
+    }
+
+    .feature-card {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 16px 20px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        border: 1px solid #e2e8f0;
+        height: 100%;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .feature-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    }
+
+    .card-blue { border-left: 4px solid #2563eb !important; }
+    .card-amber { border-left: 4px solid #d97706 !important; }
+    .card-emerald { border-left: 4px solid #059669 !important; }
+
+    /* ========================================================= */
+    /* 4. FORM INPUT & FILE UPLOADER                             */
+    /* ========================================================= */
+    /* File Uploader Container */
+    [data-testid="stFileUploader"] {
+        background-color: #f0f9ff !important;
+        border: 2px dashed #0284c7 !important;
+        border-radius: 12px !important;
+        padding: 16px !important;
+        transition: all 0.3s ease !important;
+    }
+    [data-testid="stFileUploader"]:hover {
+        background-color: #e0f2fe !important;
+        border-color: #0369a1 !important;
+        box-shadow: 0 4px 12px rgba(2, 132, 199, 0.15) !important;
+    }
+    [data-testid="stFileUploader"] label {
+        color: #0369a1 !important;
+        font-weight: 700 !important;
+        font-size: 1rem !important;
+    }
+
+    /* Text Input Box */
+    div[data-baseweb="input"] {
+        background-color: #ffffff !important;
+        border: 1.5px solid #94a3b8 !important;
+        border-radius: 8px !important;
+        padding: 2px 4px !important;
+    }
+    div[data-baseweb="input"]:focus-within {
+        border-color: #2563eb !important;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2) !important;
+    }
+    input::placeholder {
+        color: #94a3b8 !important;
+        font-style: italic;
+        font-size: 0.88rem;
+    }
+
+    /* ========================================================= */
+    /* 5. GAYA EXPANDER DINAMIK (JEJAK IKON 🟠 & 🟢)            */
+    /* ========================================================= */
+
+    /* Muka Surat Ada Isu (Jejak Ikon 🟠) - Tukar Header Penuh Jadi Oren Light */
+    div[data-testid="stExpander"]:has(span:contains("🟠")) {
+        background-color: #fff7ed !important;
+        border: 1px solid #fed7aa !important;
+        border-left: 6px solid #f97316 !important;
+        border-radius: 10px !important;
+        margin-bottom: 12px !important;
+    }
+
+    div[data-testid="stExpander"]:has(span:contains("🟠")) summary {
+        background-color: #fff7ed !important; /* <--- DI SINI: Dulu 'transparent', tukar ke '#fff7ed' */
+        border-radius: 8px !important;
+    }
+
+    /* Muka Surat Baik / Disemak (Jejak Ikon 🟢) - Kekal Lutsinar / Asal */
+    div[data-testid="stExpander"]:has(span:contains("🟢")) {
+        background-color: transparent !important;
+        border: 1px solid #e5e7eb !important;
+        border-radius: 10px !important;
+        margin-bottom: 12px !important;
+    }
+
+    div[data-testid="stExpander"]:has(span:contains("🟢")) summary {
+        background-color: transparent !important;
+    }
+
+    /* ========================================================= */
+    /* 6. FOOTER                                                 */
+    /* ========================================================= */
+    .custom-footer, .footer-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px 24px;
+        text-align: center;
+        margin-top: 30px;
+        font-size: 0.82rem;
+        color: #475569;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .custom-footer a, .footer-card a {
+        color: #2563eb;
+        text-decoration: none;
+        font-weight: 600;
+    }
+    .custom-footer a:hover, .footer-card a:hover {
+        text-decoration: underline;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- HERO HEADER BANNER ---
+st.markdown("""
+    <div class="header-card">
+        <h1>📄 Sistem Semakan Format Laporan PTA</h1>
+        <p>Garis Panduan Pengurusan Projek Tahun Akhir (GPPTA KV 2026)</p>
+    </div>
+""", unsafe_allow_html=True)
+
+uploaded_file = st.file_uploader(
+    "Muat Naik Fail PDF Laporan PTA", 
+    type=["pdf"],
+    help="Sila muat naik fail PDF Laporan PTA untuk semakan format automatik."
+)
+
+if uploaded_file is None:
+    st.markdown("""
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 20px;">
+            <div style="background-color: #ffffff; padding: 18px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #2563eb; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-weight: 700; color: #1e293b; font-size: 0.95rem; margin-bottom: 6px;">🔍 Semakan Automatik</div>
+                <p style="margin: 0; color: #64748b; font-size: 0.82rem; line-height: 1.4;">Mengesan margin, saiz fon, tajuk, dan struktur muka surat mengikut piawaian GPPTA 2026.</p>
+            </div>
+            <div style="background-color: #ffffff; padding: 18px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #d97706; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-weight: 700; color: #1e293b; font-size: 0.95rem; margin-bottom: 6px;">⚡ Visual Interaktif</div>
+                <p style="margin: 0; color: #64748b; font-size: 0.82rem; line-height: 1.4;">Paparan berkotak warna terus pada PDF untuk memudahkan pembetulan format.</p>
+            </div>
+            <div style="background-color: #ffffff; padding: 18px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #059669; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-weight: 700; color: #1e293b; font-size: 0.95rem; margin-bottom: 6px;">📊 Audit Laporan</div>
+                <p style="margin: 0; color: #64748b; font-size: 0.82rem; line-height: 1.4;">Muat turun 3 jenis laporan analisis penuh serentak untuk rujukan penyelia/pelajar.</p>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
 MATH_SYMBOL_FONTS = [
     "cambriamath",
@@ -455,19 +780,156 @@ VERB_KEYWORDS_REGEX = re.compile(
     re.IGNORECASE
 )
 
+def generate_full_audit_pdf(doc, errors_per_page, ignored_errors):
+    """Menjana PDF Audit Lanskap dengan sokongan halaman sambungan jika isu terlalu banyak."""
+    output_pdf = fitz.open()
+
+    for page_num in range(len(doc)):
+        # 1. Tapis isu yang aktif bagi muka surat ini
+        if isinstance(errors_per_page, list):
+            raw_issues = errors_per_page[page_num] if page_num < len(errors_per_page) else []
+        elif isinstance(errors_per_page, dict):
+            raw_issues = errors_per_page.get(page_num, [])
+        else:
+            raw_issues = []
+
+        page_issues = [
+            err for err in raw_issues
+            if isinstance(err, dict) and err.get("id") not in ignored_errors
+        ]
+
+        issue_index = 0
+        total_issues = len(page_issues)
+        is_first_subpage = True
+
+        # Loop ini akan terus cipta muka surat baru selagi isu belum habis dipaparkan
+        while True:
+            # Cipta Halaman A4 Lanskap (842 x 595 pt)
+            new_page = output_pdf.new_page(width=842, height=595)
+
+            # --- PANEL KIRI (PDF Original / Info Sambungan) ---
+            rect_left = fitz.Rect(10, 10, 410, 585)
+            if is_first_subpage:
+                # Papar pratonton muka surat PDF asal pada sub-halaman pertama
+                new_page.show_pdf_page(rect_left, doc, page_num)
+            else:
+                # Jika halaman sambungan, buat kotak maklumat ringkas di sebelah kiri
+                new_page.draw_rect(rect_left, color=(0.7, 0.7, 0.7), fill=(0.95, 0.95, 0.95), width=0.5)
+                new_page.insert_text(
+                    fitz.Point(50, 280), 
+                    f"SAMBUNGAN SENARAI ISU\nMUKA SURAT {page_num + 1}", 
+                    fontsize=14, 
+                    color=(0.3, 0.3, 0.3)
+                )
+
+            # --- GARISAN PEMISAH (Kiri vs Kanan) ---
+            new_page.draw_line(fitz.Point(420, 15), fitz.Point(420, 580), color=(0.2, 0.2, 0.2), width=1.5)
+
+            # --- PANEL KANAN (Senarai Isu) ---
+            panel_rect = fitz.Rect(430, 15, 827, 580)
+            new_page.draw_rect(panel_rect, color=(0.85, 0.85, 0.85), fill=(0.98, 0.98, 0.98), width=0.5)
+
+            # Tajuk Panel Kanan
+            header_title = f"MUKA SURAT {page_num + 1} - SENARAI ISU DIKESAN"
+            if not is_first_subpage:
+                header_title += " (SAMBUNGAN)"
+            
+            new_page.insert_text(fitz.Point(445, 40), header_title, fontsize=11, color=(0.1, 0.3, 0.6))
+            new_page.draw_line(fitz.Point(445, 48), fitz.Point(812, 48), color=(0.8, 0.8, 0.8), width=0.8)
+
+            y_pos = 70
+
+            # Jika tiada isu langsung pada muka surat ini
+            if total_issues == 0:
+                new_page.insert_text(fitz.Point(445, y_pos), "✅ Tiada isu dikesan pada muka surat ini.", fontsize=10, color=(0, 0.5, 0))
+                break
+
+            # Cetak senarai isu sehingga bawah panel (y_pos < 550)
+            while issue_index < total_issues and y_pos <= 540:
+                issue = page_issues[issue_index]
+
+                # Ekstrak ayat isu spesifik UI
+                ayat_isu = (
+                    issue.get("text") or 
+                    issue.get("msg") or 
+                    issue.get("label") or 
+                    issue.get("description") or 
+                    "Ralat Format Margin / Teks"
+                )
+                ayat_isu = ayat_isu.replace("Abaikan (Bypass): ", "").strip()
+
+                # Cetak Teks Isu
+                new_page.insert_text(fitz.Point(445, y_pos), f"{issue_index + 1}. ⚠️ {ayat_isu}", fontsize=9.5, color=(0.8, 0.1, 0.1))
+                
+                y_pos += 22
+                issue_index += 1
+
+            # Jika semua isu muka surat ini dah selesai dicetak, keluar loop
+            if issue_index >= total_issues:
+                break
+            
+            # Jika masih ada isu berbaki, tandakan sub-page seterusnya
+            is_first_subpage = False
+
+    return output_pdf.write()
+
+def sanitize_text_for_fpdf(text):
+    """Menukar aksara Unicode khas kepada aksara Latin standard yang disokong oleh FPDF (helvetica)."""
+    if not isinstance(text, str):
+        text = str(text)
+    
+    replacements = {
+        "–": "-",  # En-dash ke hyphen biasa
+        "—": "-",  # Em-dash ke hyphen biasa
+        "‘": "'",  # Smart quote kiri ke petik biasa
+        "’": "'",  # Smart quote kanan ke petik biasa
+        "“": '"',  # Smart double quote kiri
+        "”": '"',  # Smart double quote kanan
+        "…": "...", # Ellipsis
+        "•": "-",  # Bullet point
+    }
+    for orig, repl in replacements.items():
+        text = text.replace(orig, repl)
+        
+    # Tukar aksara berbaki yang tidak disokong kepada ASCII
+    return text.encode("latin-1", "replace").decode("latin-1")
+
 def generate_pdf_report(filtered_errors, total_pages):
+    # --- FUNGSI PEMBERSIH AKSARA UNICODE ---
+    def sanitize_text(text):
+        if not isinstance(text, str):
+            text = str(text)
+        replacements = {
+            "–": "-",  # En-dash ke hyphen biasa
+            "—": "-",  # Em-dash ke hyphen biasa
+            "‘": "'",  # Smart quote
+            "’": "'",
+            "“": '"',  # Smart double quote
+            "”": '"',
+            "…": "...",
+            "•": "-",
+        }
+        for orig, repl in replacements.items():
+            text = text.replace(orig, repl)
+        return text.encode("latin-1", "replace").decode("latin-1")
+
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    
+    # Tajuk Utama
     pdf.set_font("Helvetica", "B", 16)
+    title_str = sanitize_text("Laporan Semakan Format Laporan PTA (GPPTA KV 2026)")
     pdf.cell(
         0,
         10,
-        "Laporan Semakan Format Laporan PTA (GPPTA KV 2026)",
+        title_str,
         new_x="LMARGIN",
         new_y="NEXT",
         align="C",
     )
+    
+    # Sub-tajuk Jumlah Muka Surat
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(
         0,
@@ -484,7 +946,7 @@ def generate_pdf_report(filtered_errors, total_pages):
         pdf.cell(
             0,
             10,
-            "Tiada isu format dikesan. Tesis mematuhi piawaian!",
+            "Tiada isu format dikesan. Laporan PTA mematuhi piawaian!",
             new_x="LMARGIN",
             new_y="NEXT",
         )
@@ -504,16 +966,21 @@ def generate_pdf_report(filtered_errors, total_pages):
         pdf.set_font("Helvetica", "", 10)
         for item in filtered_errors:
             page_str = f"MS {item['page']}"
-            issue_str = item["msg"].replace("*", "")
+            
+            # 1. Ambil mesej asal
+            raw_msg = item["msg"].replace("*", "")
+            
+            # 2. BERSIHKAN TEKS UNICODE KHAS DI SINI
+            clean_issue_str = sanitize_text(raw_msg)
+            
             pdf.cell(30, 8, page_str, border=1, align="C")
             pdf.cell(
-                160, 8, issue_str[:90], border=1, new_x="LMARGIN", new_y="NEXT"
+                160, 8, clean_issue_str[:90], border=1, new_x="LMARGIN", new_y="NEXT"
             )
 
     return bytes(pdf.output())
 
-
-def generate_annotated_thesis(doc_input, all_pages_errors, ignored_set):
+def generate_annotated_report(doc_input, all_pages_errors, ignored_set):
     pdf_buffer = io.BytesIO()
     doc_input.save(pdf_buffer)
     pdf_buffer.seek(0)
@@ -530,6 +997,12 @@ def generate_annotated_thesis(doc_input, all_pages_errors, ignored_set):
     annotated_doc.save(out_buffer)
     annotated_doc.close()
     return out_buffer.getvalue()
+
+def get_base_filename(uploaded_filename):
+    """Mengambil nama fail tanpa ekstensi .pdf."""
+    base_name, _ = os.path.splitext(uploaded_filename)
+    # Bersihkan aksara berisiko jika ada
+    return base_name.strip()
 
 def create_download_button_html(
     file_bytes, filename, button_text, color="#2563eb"
@@ -555,10 +1028,6 @@ def create_download_button_html(
     </a>
     """
 
-
-st.title("📄 Sistem Semakan Format Laporan PTA (GPPTA KV 2026)")
-uploaded_file = st.file_uploader("Muat Naik Fail PDF Laporan PTA", type=["pdf"])
-
 if uploaded_file is not None:
     # Semak had harian sebelum upload (HANYA JIKA BUKAN BYPASS LIMIT)
     if not DEV_BYPASS_LIMIT and rekod_penggunaan["jumlah"] >= HAD_HARIAN:
@@ -573,7 +1042,20 @@ if uploaded_file is not None:
         
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     
-    # Rekod penggunaan (Simpan ke Windows Registry)
+    # =========================================================
+    # RESET MEMORI DOKUMEN BILA FAIL BAHARU / UMBAS SEMULA
+    # =========================================================
+    if "current_file_bytes" not in st.session_state or st.session_state.current_file_bytes != pdf_bytes:
+        st.session_state.current_file_bytes = pdf_bytes
+        st.session_state.upload_start_time = time.time()
+        
+        # Kosongkan memory PDF yang dijana sebelum ini
+        st.session_state.report_pdf_bytes = None
+        st.session_state.annotated_pdf_bytes = None
+        st.session_state.survey_completed_cb = False
+        st.session_state.logged_sesi_1 = False
+
+    # Rekod penggunaan Registry (Simpan jika nama fail berbeza/kali pertama)
     if "last_uploaded_file" not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.name:
         st.session_state.last_uploaded_file = uploaded_file.name
         rekod_penggunaan["jumlah"] += 1
@@ -582,9 +1064,9 @@ if uploaded_file is not None:
     st.success(f"Fail '{uploaded_file.name}' Berjaya Diimbas! Baki semakan harian: {HAD_HARIAN - rekod_penggunaan['jumlah']}")
     st.success(f"Jumlah muka surat: {len(doc)}")
 
-    # Mula kira masa imbasan
-    start_time = time.time()
-
+    # Inisialisasi session state sokongan (jika belum ada)
+    if "upload_start_time" not in st.session_state:
+        st.session_state.upload_start_time = time.time()
     if "ignored_errors" not in st.session_state:
         st.session_state.ignored_errors = set()
     if "report_pdf_bytes" not in st.session_state:
@@ -597,6 +1079,20 @@ if uploaded_file is not None:
             st.session_state.ignored_errors.remove(err_id)
         else:
             st.session_state.ignored_errors.add(err_id)
+
+        st.session_state.report_pdf_bytes = None
+        st.session_state.annotated_pdf_bytes = None
+        st.rerun()
+
+    def toggle_bypass_page(page_err_ids):
+        # Semak sama ada semua isu dalam ms ini sudah di-ignore
+        all_ignored = all(eid in st.session_state.ignored_errors for eid in page_err_ids)
+        
+        for eid in page_err_ids:
+            if all_ignored:
+                st.session_state.ignored_errors.discard(eid)
+            else:
+                st.session_state.ignored_errors.add(eid)
 
         st.session_state.report_pdf_bytes = None
         st.session_state.annotated_pdf_bytes = None
@@ -670,16 +1166,14 @@ if uploaded_file is not None:
                         has_pagenum_found = True
                         pagenum_bboxes.append((wx0, wy0, wx1, wy1))
                 else:
-                    # Kawasan Portrait (GP PTA 2026: Berada di Bahagian Bawah Penjuru Sebelah Kanan)
+                    # Kawasan Portrait (GP PTA 2026: Bawah Penjuru Sebelah Kanan)
                     if wy0 > (rect.height - 100):  # Berada di zon footer
-                        # Nombor sepatutnya berada di kawasan 60% hingga 100% lebar kertas (Sebelah Kanan)
                         right_min = rect.width * 0.60  
 
                         if wx0 >= right_min:
                             has_pagenum_found = True
                             pagenum_bboxes.append((wx0, wy0, wx1, wy1))
                         else:
-                            # Jika berada di Bawah Tengah atau Bawah Kiri, tangkap sebagai RALAT POSISI
                             loc_name = (
                                 "bawah tengah" if wx0 >= (rect.width * 0.33) else "bawah kiri"
                             )
@@ -769,7 +1263,7 @@ if uploaded_file is not None:
                                         }
                                     )
 
-                                # Piawai Saiz Font GPPTA KV 2026: Teks (11pt), Tajuk Kecil (12pt), Tajuk Bab (14pt)
+                                # Piawai Saiz Font GPPTA KV 2026
                                 if len(text) > 5:
                                     if size < 8.5:
                                         page_errors.append(
@@ -887,34 +1381,8 @@ if uploaded_file is not None:
             if err_id not in st.session_state.ignored_errors:
                 detected_issues.append({"page": page_num + 1, "msg": err["msg"]})
 
-    # =========================================================
-    # AUTOMATIK: METRIK, LOGGING & KAJI SELIDIK
-    # =========================================================
-
-    # --- A. AMBIL METRIK PEMPROSESAN ---
-    try:
-        import winreg
-        env_type = "Local (Windows)"
-    except ImportError:
-        env_type = "Online (Cloud)"
-
-    saiz_mb = round(len(uploaded_file.getvalue()) / (1024 * 1024), 2)
-    masa_proses = round(time.time() - start_time, 2) if 'start_time' in locals() else 0.0
-    jumlah_ms = len(doc)
-    jumlah_ralat = len(detected_issues)
-
-    # --- B. HANTAR LOG KE GOOGLE SHEETS AUTOMATIK ---
-    hantar_log_penggunaan(
-        environment=env_type,
-        filename=uploaded_file.name,
-        file_size_mb=saiz_mb,
-        processing_time_sec=masa_proses,
-        total_pages=jumlah_ms,
-        total_errors=jumlah_ralat
-    )
-
     # =========================================================================
-    # 🔍 PRATONTON VISUAL PER MUKA SURAT (DIPINDAHKAN KE ATAS)
+    # 🔍 PRATONTON VISUAL PER MUKA SURAT
     # =========================================================================
     st.markdown("---")
     st.write(
@@ -931,12 +1399,20 @@ if uploaded_file is not None:
             for i in range(len(unique_page_errors))
         )
 
-        status_icon = "⚠️ Ada Isu" if has_active_errors else "✅ Baik / Disemak"
         tag_landscape = " [Landscape]" if is_landscape else ""
 
-        with st.expander(
-            f"Muka Surat {page_num + 1}{tag_landscape} - ({status_icon})"
-        ):
+        # 1. Tentukan teks status dan ikon penanda CSS
+        if has_active_errors:
+            status_text = "⚠️ Ada Isu"
+            exp_icon = "🟠"
+        else:
+            status_text = "✅ Baik / Disemak"
+            exp_icon = "🟢"
+
+        exp_label = f"Muka Surat {page_num + 1}{tag_landscape} - ({status_text})"
+
+        # 2. Buka Expander (Gaya dipicu secara automatik oleh exp_icon)
+        with st.expander(exp_label, icon=exp_icon):
             col_img, col_details = st.columns([1, 1])
             doc_page = doc[page_num]
 
@@ -965,8 +1441,11 @@ if uploaded_file is not None:
                     st.success("Muka surat ini mematuhi piawai GPPTA KV 2026 (Bebas ralat).")
                 else:
                     st.write("**Senarai Isu Dikesan:**")
+                    page_err_ids = []
+                    
                     for i, err in enumerate(unique_page_errors):
                         err_id = f"p{page_num+1}_{i}"
+                        page_err_ids.append(err_id)
                         is_ignored = err_id in st.session_state.ignored_errors
 
                         st.checkbox(
@@ -977,67 +1456,160 @@ if uploaded_file is not None:
                             args=(err_id,),
                         )
 
-    # =========================================================================
-    # 📄 SEKSYEN JANA & MUAT TURUN DOKUMEN AKHIR (DIPINDAHKAN KE BAWAH)
-    # =========================================================================
-    st.markdown("---")
-    st.subheader("📄 Jana & Muat Turun Dokumen Akhir")
-
-    st.write(
-        f"Jumlah isu aktif yang disahkan untuk dilaporkan: **{len(detected_issues)} isu**"
-    )
-
-    if st.button(
-        "⚙️ Jana Dokumen PDF Akhir",
-        type="primary",
-        use_container_width=True,
-    ):
-        with st.spinner("Menjana fail PDF akhir... Sila tunggu sebentar."):
-            st.session_state.report_pdf_bytes = generate_pdf_report(
-                detected_issues, len(doc)
-            )
-            st.session_state.annotated_pdf_bytes = generate_annotated_thesis(
-                doc, all_pages_errors_list, st.session_state.ignored_errors
-            )
-        st.success("Fail PDF telah sedia untuk dimuat turun!")
-
-    if (
-        st.session_state.report_pdf_bytes is not None
-        and st.session_state.annotated_pdf_bytes is not None
-    ):
-        col_down1, col_down2 = st.columns(2)
-
-        with col_down1:
-            btn_html_1 = create_download_button_html(
-                st.session_state.report_pdf_bytes,
-                "Laporan_Semakan_Format_PTA_KV.pdf",
-                "📥 1. Muat Turun Laporan Ringkasan (PDF)",
-                color="#2563eb",
-            )
-            st.markdown(btn_html_1, unsafe_allow_html=True)
-
-        with col_down2:
-            btn_html_2 = create_download_button_html(
-                st.session_state.annotated_pdf_bytes,
-                "Laporan_PTA_Visual_Kotak_Ralat.pdf",
-                "📥 2. Muat Turun Laporan PTA Visual Berkotak (PDF)",
-                color="#059669",
-            )
-            st.markdown(btn_html_2, unsafe_allow_html=True)
+                    if page_err_ids:
+                        st.markdown("---")
+                        all_page_ignored = all(eid in st.session_state.ignored_errors for eid in page_err_ids)
+                        st.checkbox(
+                            "🚫 **Abaikan Semua (Bypass Page Ini)**",
+                            key=f"cb_all_p{page_num+1}",
+                            value=all_page_ignored,
+                            on_change=toggle_bypass_page,
+                            args=(page_err_ids,),
+                        )
 
     # =========================================================================
-    # 📋 KAJI SELIDIK & MAKLUM BALAS PENGGUNA (DIPINDAHKAN KE BAWAH)
+    # 📋 KAJI SELIDIK & MAKLUM BALAS PENGGUNA (DILETAKKAN SEBELUM JANA PDF)
     # =========================================================================
     st.markdown("---")
     st.subheader("📋 Kaji Selidik & Maklum Balas Pengguna")
     st.info("Sila luangkan masa 1 minit untuk menilai pengalaman penggunaan e-Semak PTA demi penambahbaikan berterusan.")
-    
+
     st.link_button(
-        "⭐ Isi Borang Kaji Selidik Pengguna",
+        "⭐ 1. Klik Di Sini Untuk Isi Borang Kaji Selidik",
         "https://forms.gle/C4sLEf1zmCrbneqT8",
         type="primary",
         use_container_width=True
     )
+
+    # Callback untuk menghantar Log Sesi 1 sebaik sahaja pengguna mentandakan checkbox
+    def on_survey_check():
+        if st.session_state.survey_completed_cb and not st.session_state.get("logged_sesi_1", False):
+            st.session_state.logged_sesi_1 = True
+            
+            try:
+                import winreg
+                env_type = "Local (Windows)"
+            except ImportError:
+                env_type = "Online (Cloud)"
+
+            saiz_mb = round(len(uploaded_file.getvalue()) / (1024 * 1024), 2)
+            start_t = st.session_state.get("upload_start_time", time.time() - 1)
+            masa_proses = round(max(time.time() - start_t, 1.0), 2)
+
+            hantar_log_penggunaan(
+                environment=f"{env_type} [Sesi 1: Klik Survey]",
+                filename=uploaded_file.name,
+                file_size_mb=saiz_mb,
+                processing_time_sec=masa_proses,
+                total_pages=len(doc),
+                total_errors=len(detected_issues)
+            )
+
+    st.checkbox(
+        "✅ Saya telah / sedang mengisi borang kaji selidik di atas",
+        key="survey_completed_cb",
+        on_change=on_survey_check
+    )
+
+    # =========================================================================
+    # 📄 SEKSYEN JANA & MUAT TURUN DOKUMEN AKHIR (SEKATAN KAJI SELIDIK)
+    # =========================================================================
+    st.markdown("---")
+    st.subheader("📄 Jana & Muat Turun Dokumen Akhir")
+
+    if not st.session_state.get("survey_completed_cb", False):
+        st.warning("🔒 **Butang Jana Dokumen Terkunci:** Sila isi borang kaji selidik dan tandakan kotak pengesahan di atas terlebih dahulu untuk membuka kunci penjanaan laporan.")
+    else:
+        st.success("🔓 **Kunci Dibuka:** Terima kasih! Anda kini boleh menjana dan memuat turun dokumen akhir.")
+        st.write(
+            f"Jumlah isu aktif yang disahkan untuk dilaporkan: **{len(detected_issues)} isu**"
+        )
+
+        if st.button(
+            "⚙️ Jana Dokumen PDF Akhir",
+            type="primary",
+            width="stretch",
+        ):
+            with st.spinner("Menjana kesemua variasi laporan PDF... Sila tunggu sebentar."):
+                # 1. Jana Laporan Ringkasan
+                st.session_state.report_pdf_bytes = generate_pdf_report(
+                    detected_issues, len(doc)
+                )
+                
+                # 2. Jana Laporan Visual Berkotak
+                st.session_state.annotated_pdf_bytes = generate_annotated_report(
+                    doc, all_pages_errors_list, st.session_state.ignored_errors
+                )
+
+                # 3. Jana Laporan Audit Penuh (Side-by-Side dengan Garisan Pemisah)
+                st.session_state.full_audit_pdf_bytes = generate_full_audit_pdf(
+                    doc, all_pages_errors_list, st.session_state.ignored_errors
+                )
+
+                # --- HANTAR LOG SESI 2 KE GOOGLE SHEETS ---
+                try:
+                    import winreg
+                    env_type = "Local (Windows)"
+                except ImportError:
+                    env_type = "Online (Cloud)"
+
+                saiz_mb = round(len(uploaded_file.getvalue()) / (1024 * 1024), 2)
+                start_t = st.session_state.get("upload_start_time", time.time() - 1)
+                masa_proses = round(max(time.time() - start_t, 1.0), 2)
+
+                hantar_log_penggunaan(
+                    environment=f"{env_type} [Sesi 2: Jana PDF]",
+                    filename=uploaded_file.name,
+                    file_size_mb=saiz_mb,
+                    processing_time_sec=masa_proses,
+                    total_pages=len(doc),
+                    total_errors=len(detected_issues)
+                )
+
+            st.success("Kesemua 3 fail PDF telah sedia untuk dimuat turun!")
+
+        # --- PAPARAN 3 BUTANG MUAT TURUN ---
+        if (
+            st.session_state.get("report_pdf_bytes") is not None
+            and st.session_state.get("annotated_pdf_bytes") is not None
+            and st.session_state.get("full_audit_pdf_bytes") is not None
+        ):
+            # Dapatkan nama asas fail asal (contoh: 'LAPORAN_PTA_AKMAL_DANI')
+            base_filename = get_base_filename(uploaded_file.name)
+
+            # Bina nama fail baharu mengikut kategori
+            name_summary = f"Laporan_Ringkasan ({base_filename}).pdf"
+            name_visual = f"Laporan_Visual ({base_filename}).pdf"
+            name_audit = f"Laporan_Audit_SideBySide ({base_filename}).pdf"
+
+            col_down1, col_down2, col_down3 = st.columns(3)
+
+            with col_down1:
+                btn_html_1 = create_download_button_html(
+                    st.session_state.report_pdf_bytes,
+                    name_summary,
+                    "📥 1. Laporan Ringkasan (PDF)",
+                    color="#2563eb",
+                )
+                st.markdown(btn_html_1, unsafe_allow_html=True)
+
+            with col_down2:
+                btn_html_2 = create_download_button_html(
+                    st.session_state.annotated_pdf_bytes,
+                    name_visual,
+                    "📥 2. Visual Berkotak (PDF)",
+                    color="#059669",
+                )
+                st.markdown(btn_html_2, unsafe_allow_html=True)
+
+            with col_down3:
+                btn_html_3 = create_download_button_html(
+                    st.session_state.full_audit_pdf_bytes,
+                    name_audit,
+                    "📥 3. Audit Penuh Side-by-Side (PDF)",
+                    color="#d97706",
+                )
+                st.markdown(btn_html_3, unsafe_allow_html=True)
 
     # ==================== BUTANG KEMBALI KE ATAS ====================
     st.markdown("---")

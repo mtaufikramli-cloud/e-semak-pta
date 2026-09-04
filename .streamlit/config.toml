@@ -7,3 +7,9 @@ primaryColor = "#2563eb"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f8fafc"
 textColor = "#0f172a"
+
+[client]
+toolbarMode = "minimal"  # atau "viewer" untuk sembunyikan terus menu dev/fork
+
+[ui]
+hideTopBar = true

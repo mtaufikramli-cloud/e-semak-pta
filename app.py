@@ -724,6 +724,23 @@ st.markdown("""
     .custom-footer a:hover, .footer-card a:hover {
         text-decoration: underline;
     }
+
+    /* 1. Kembalikan butang toggle sidebar di skrin telefon */
+    [data-testid="stSidebarCollapseButton"] {
+        display: block !important;
+        visibility: visible !important;
+        z-index: 999999 !important;
+    }
+
+    /* 2. Sembunyikan latar belakang header tetapi kekalkan butang di atas */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+    }
+
+    /* 3. Sembunyikan hanya butang hiasan/menu kanan header */
+    [data-testid="stToolbar"] {
+        display: none !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 

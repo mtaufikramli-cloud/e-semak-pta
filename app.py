@@ -288,33 +288,6 @@ st.markdown(
         display: none !important;
     }
 
-    /* 1. Sembunyikan Badge Profil & Viewer Card (Bawah Kanan) */
-    [data-testid="stStatusWidget"],
-    .stAppBadge,
-    iframe[title="streamlit_app"],
-    div[class*="viewerBadge"],
-    div[class*="profile"],
-    a[href*="share.streamlit.io/user"] {
-        display: none !important;
-        visibility: hidden !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-    }
-
-    /* 2. Sembunyikan Ikon Mahkota & Toolbar Streamlit (Bottom Right Container) */
-    [data-testid="stDecoration"],
-    [data-testid="stToolbar"],
-    .stDeployButton,
-    footer,
-    #MainMenu {
-        display: none !important;
-        visibility: hidden !important;
-    }
-
-    /* 3. Sembunyikan Bar Atas (Header & Fork Button) */
-    header[data-testid="stHeader"] {
-        display: none !important;
-    }
     </style>
     """,
     unsafe_allow_html=True,

@@ -87,7 +87,7 @@ def paparkan_footer_maklumat():
 DEV_BYPASS_LIMIT = False    # True = Abaikan had upload PDF (boleh upload unlimit)
 DEV_BYPASS_EXPIRED = False  # True = Abaikan tarikh luput (lesen sentiasa aktif)
 
-HAD_HARIAN = 30
+HAD_HARIAN = 20
 
 # TETAPAN TARIKH & MASA LUPUT (Tahun, Bulan, Hari, Jam, Minit, Saat)
 # Uji tarikh/masa tertentu di sini:
@@ -235,42 +235,6 @@ st.set_page_config(
     page_title="Semakan Format PTA KV (GPPTA 2026)",
     layout="wide",
     page_icon="📄"
-)
-
-st.markdown(
-    """
-    <style>
-    
-    /* 1. Sembunyikan Badge Profil & Viewer Card (Bawah Kanan) */
-    [data-testid="stStatusWidget"],
-    .stAppBadge,
-    iframe[title="streamlit_app"],
-    div[class*="viewerBadge"],
-    div[class*="profile"],
-    a[href*="share.streamlit.io/user"] {
-        display: none !important;
-        visibility: hidden !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-    }
-
-    /* 2. Sembunyikan Ikon Mahkota & Toolbar Streamlit (Bottom Right Container) */
-    [data-testid="stDecoration"],
-    [data-testid="stToolbar"],
-    .stDeployButton,
-    footer,
-    #MainMenu {
-        display: none !important;
-        visibility: hidden !important;
-    }
-
-    /* 3. Sembunyikan Bar Atas (Header & Fork Button) */
-    header[data-testid="stHeader"] {
-        display: none !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
 )
 
 st.markdown("""
@@ -498,69 +462,18 @@ with st.sidebar:
 
 st.markdown("""
     <style>
-    /* ========================================================= */
-    /* 1. LAYOUT UTAMA & PENGATURAN AM                            */
-    /* ========================================================= */
+    /* 1. Latar Belakang Utama (Slate Soft) */
     .stApp {
         background-color: #f8fafc;
     }
-
-    /* ========================================================= */
-    /* 2. SIDEBAR (DARK CORPORATE THEME)                        */
-    /* ========================================================= */
+    
+    /* 2. Gaya Sidebar Kiri (Professional Premium Look) */
     [data-testid="stSidebar"] {
-        background-color: #0f172a !important; /* Dark Navy */
-        border-right: 1px solid #1e293b !important;
+        background-color: #ffffff !important;
+        border-right: 1px solid #e2e8f0;
     }
-
-    /* Warna Teks, Tajuk & Label Sidebar */
-    [data-testid="stSidebar"] h1, 
-    [data-testid="stSidebar"] h2, 
-    [data-testid="stSidebar"] h3, 
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] p {
-        color: #f1f5f9 !important;
-    }
-
-    /* Teks Muted & Garisan Pemisah */
-    [data-testid="stSidebar"] .stMarkdown small,
-    [data-testid="stSidebar"] caption {
-        color: #94a3b8 !important;
-    }
-
-    [data-testid="stSidebar"] hr {
-        border-color: #334155 !important;
-        margin: 16px 0 !important;
-    }
-
-    /* Selectbox / Dropdown Dalam Sidebar */
-    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
-        background-color: #1e293b !important;
-        border-color: #475569 !important;
-        color: #ffffff !important;
-        border-radius: 8px !important;
-    }
-
-    /* Butang Log Out Sidebar (Merah Crimson) */
-    [data-testid="stSidebar"] .stButton > button {
-        background-color: #991b1b !important;
-        color: #ffffff !important;
-        border: 1px solid #dc2626 !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        transition: all 0.2s ease !important;
-    }
-
-    [data-testid="stSidebar"] .stButton > button:hover {
-        background-color: #dc2626 !important;
-        border-color: #ef4444 !important;
-        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3) !important;
-    }
-
-    /* ========================================================= */
-    /* 3. HERO BANNER HEADER & CARDS                              */
-    /* ========================================================= */
+    
+    /* 3. Hero Header Banner Corporate Gradient */
     .header-card {
         background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 60%, #2563eb 100%);
         padding: 28px 32px;
@@ -586,7 +499,21 @@ st.markdown("""
         font-weight: 400;
     }
 
-    /* Feature & Info Cards */
+    /* 4. Kotak Muat Naik Fail (File Uploader Styling) */
+    div[data-testid="stFileUploader"] {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 14px;
+        border: 2px dashed #94a3b8;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03);
+        transition: all 0.3s ease;
+    }
+    div[data-testid="stFileUploader"]:hover {
+        border-color: #2563eb;
+        background-color: #f0f6ff;
+    }
+
+    /* 5. Kad Panduan Ringkas (Info Cards) */
     .info-grid {
         display: flex;
         gap: 16px;
@@ -616,6 +543,100 @@ st.markdown("""
         margin: 0;
     }
 
+    /* 6. Footer Moden & Kemas */
+    .footer-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px 24px;
+        text-align: center;
+        margin-top: 40px;
+        font-size: 0.82rem;
+        color: #475569;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .footer-card a {
+        color: #2563eb;
+        text-decoration: none;
+        font-weight: 600;
+    }
+    .footer-card a:hover {
+        text-decoration: underline;
+    }
+    /* ========================================================= */
+    /* STYLING KHAS SIDEBAR (DARK CORPORATE THEME)               */
+    /* ========================================================= */
+    [data-testid="stSidebar"] {
+        background-color: #0f172a !important; /* Warna Dark Navy */
+        border-right: 1px solid #1e293b !important;
+    }
+
+    /* Warna Teks & Tajuk Dalam Sidebar */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3, 
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p {
+        color: #f1f5f9 !important;
+    }
+
+    /* Warna Teks Muted/Kecil */
+    [data-testid="stSidebar"] .stMarkdown small,
+    [data-testid="stSidebar"] caption {
+        color: #94a3b8 !important;
+    }
+
+    /* Garisan Pemisah (Horizontal Rule) */
+    [data-testid="stSidebar"] hr {
+        border-color: #334155 !important;
+        margin: 16px 0 !important;
+    }
+
+    /* Styling Khas Kotak Selectbox/Dropdown Dalam Sidebar */
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background-color: #1e293b !important;
+        border-color: #475569 !important;
+        color: #ffffff !important;
+        border-radius: 8px !important;
+    }
+
+    /* Styling Butang Log Out di Sidebar */
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: #991b1b !important; /* Merah Crimson */
+        color: #ffffff !important;
+        border: 1px solid #dc2626 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background-color: #dc2626 !important;
+        border-color: #ef4444 !important;
+        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3) !important;
+    }
+
+    /* ========================================================= */
+    /* STYLING UTAMA (MAIN CONTAINER & FILE UPLOADER)             */
+    /* ========================================================= */
+    
+    /* Kotak File Uploader Streamlit */
+    [data-testid="stFileUploader"] {
+        background-color: #f8fafc !important;
+        border: 2px dashed #cbd5e1 !important;
+        border-radius: 12px !important;
+        padding: 15px !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    [data-testid="stFileUploader"]:hover {
+        border-color: #2563eb !important;
+        background-color: #eff6ff !important;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08) !important;
+    }
+
+    /* Styling Kad Ciri (Feature Cards) */
     .feature-card {
         background-color: #ffffff;
         border-radius: 10px;
@@ -625,135 +646,71 @@ st.markdown("""
         height: 100%;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
+
     .feature-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
     }
 
+    /* Warna Border Aksen Khas Kiri */
     .card-blue { border-left: 4px solid #2563eb !important; }
     .card-amber { border-left: 4px solid #d97706 !important; }
     .card-emerald { border-left: 4px solid #059669 !important; }
 
-    /* ========================================================= */
-    /* 4. FORM INPUT & FILE UPLOADER                             */
-    /* ========================================================= */
-    /* File Uploader Container */
+    /* Styling Footer */
+    .custom-footer {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-top: 30px;
+        text-align: center;
+        color: #475569;
+        font-size: 0.82rem;
+    }
+
+    /* Styling Khas Untuk Kotak File Uploader */
     [data-testid="stFileUploader"] {
-        background-color: #f0f9ff !important;
-        border: 2px dashed #0284c7 !important;
+        background-color: #f0f9ff !important; /* Latar belakang biru lembut */
+        border: 2px dashed #0284c7 !important; /* Garis tepi berputus-putus biru */
         border-radius: 12px !important;
         padding: 16px !important;
         transition: all 0.3s ease !important;
     }
+
+    /* Kesan Hover Apabila Tetikus Lalukan Pada Kotak Upload */
     [data-testid="stFileUploader"]:hover {
-        background-color: #e0f2fe !important;
+        background-color: #e0f2fe !important; /* Biru terang sikit */
         border-color: #0369a1 !important;
         box-shadow: 0 4px 12px rgba(2, 132, 199, 0.15) !important;
     }
+
+    /* Menukar Warna Teks Label "Muat Naik Fail PDF Laporan PTA" */
     [data-testid="stFileUploader"] label {
         color: #0369a1 !important;
         font-weight: 700 !important;
         font-size: 1rem !important;
     }
 
-    /* Text Input Box */
+    /* Menegaskan garisan border & warna kotak input kata laluan */
     div[data-baseweb="input"] {
         background-color: #ffffff !important;
-        border: 1.5px solid #94a3b8 !important;
+        border: 1.5px solid #94a3b8 !important; /* Border kelabu lebih jelas */
         border-radius: 8px !important;
         padding: 2px 4px !important;
     }
+
+    /* Apabila tetikus klik di dalam kotak input (Active state) */
     div[data-baseweb="input"]:focus-within {
-        border-color: #2563eb !important;
+        border-color: #2563eb !important; /* Bertukar warna biru terang */
         box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2) !important;
     }
+
+    /* Warna Teks Placeholder */
     input::placeholder {
         color: #94a3b8 !important;
         font-style: italic;
         font-size: 0.88rem;
-    }
-
-    /* ========================================================= */
-    /* 5. GAYA EXPANDER DINAMIK (JEJAK IKON 🟠 & 🟢)            */
-    /* ========================================================= */
-
-    /* Muka Surat Ada Isu (Jejak Ikon 🟠) - Tukar Header Penuh Jadi Oren Light */
-    div[data-testid="stExpander"]:has(span:contains("🟠")) {
-        background-color: #fff7ed !important;
-        border: 1px solid #fed7aa !important;
-        border-left: 6px solid #f97316 !important;
-        border-radius: 10px !important;
-        margin-bottom: 12px !important;
-    }
-
-    div[data-testid="stExpander"]:has(span:contains("🟠")) summary {
-        background-color: #fff7ed !important; /* <--- DI SINI: Dulu 'transparent', tukar ke '#fff7ed' */
-        border-radius: 8px !important;
-    }
-
-    /* Muka Surat Baik / Disemak (Jejak Ikon 🟢) - Kekal Lutsinar / Asal */
-    div[data-testid="stExpander"]:has(span:contains("🟢")) {
-        background-color: transparent !important;
-        border: 1px solid #e5e7eb !important;
-        border-radius: 10px !important;
-        margin-bottom: 12px !important;
-    }
-
-    div[data-testid="stExpander"]:has(span:contains("🟢")) summary {
-        background-color: transparent !important;
-    }
-
-    /* ========================================================= */
-    /* 6. FOOTER                                                 */
-    /* ========================================================= */
-    .custom-footer, .footer-card {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 16px 24px;
-        text-align: center;
-        margin-top: 30px;
-        font-size: 0.82rem;
-        color: #475569;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-    }
-    .custom-footer a, .footer-card a {
-        color: #2563eb;
-        text-decoration: none;
-        font-weight: 600;
-    }
-    .custom-footer a:hover, .footer-card a:hover {
-        text-decoration: underline;
-    }
-
-    /* 1. Kekalkan kebenaran untuk kontena header memaparkan elemen anak */
-    div[data-testid="stHeader"] {
-        background-color: transparent !important;
-        z-index: 99999 !important;
-        display: block !important;
-        visibility: visible !important;
-    }
-
-    /* 2. Sasar butang pemicu sidebar secara khusus di peringkat iframe utama */
-    div[data-testid="stHeader"] button,
-    div[data-testid="stSidebarCollapsedControl"],
-    div[data-testid="stSidebarCollapseButton"] button {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        top: 10px !important;
-        left: 10px !important;
-        z-index: 100000 !important;
-        background-color: #ffffff !important;
-        border: 1px solid #c3c7cb !important;
-        border-radius: 6px !important;
-        color: #000000 !important;
-    }
-
-    /* 3. Sembunyikan HANYA menu kanan (Deploy / 3-Dots) tanpa usik butang kiri */
-    div[data-testid="stToolbar"] {
-        display: none !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -1465,20 +1422,12 @@ if uploaded_file is not None:
             for i in range(len(unique_page_errors))
         )
 
+        status_icon = "⚠️ Ada Isu" if has_active_errors else "✅ Baik / Disemak"
         tag_landscape = " [Landscape]" if is_landscape else ""
 
-        # 1. Tentukan teks status dan ikon penanda CSS
-        if has_active_errors:
-            status_text = "⚠️ Ada Isu"
-            exp_icon = "🟠"
-        else:
-            status_text = "✅ Baik / Disemak"
-            exp_icon = "🟢"
-
-        exp_label = f"Muka Surat {page_num + 1}{tag_landscape} - ({status_text})"
-
-        # 2. Buka Expander (Gaya dipicu secara automatik oleh exp_icon)
-        with st.expander(exp_label, icon=exp_icon):
+        with st.expander(
+            f"Muka Surat {page_num + 1}{tag_landscape} - ({status_icon})"
+        ):
             col_img, col_details = st.columns([1, 1])
             doc_page = doc[page_num]
 

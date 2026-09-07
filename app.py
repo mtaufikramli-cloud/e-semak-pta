@@ -240,6 +240,54 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    <!-- 1. Butang Floating Toggle Khas Utk Phone & Desktop -->
+    <button onclick="toggleStreamlitSidebar()" id="custom-sidebar-btn">
+        ☰ Menu Tetapan
+    </button>
+
+    <script>
+    function toggleStreamlitSidebar() {
+        // Cari button expand/collapse asal Streamlit & paksa klik
+        const mainDoc = window.parent.document;
+        const sidebarBtn = mainDoc.querySelector('button[data-testid="stBaseButton-header"]') || 
+                           mainDoc.querySelector('[data-testid="stSidebarCollapseButton"] button');
+        
+        if (sidebarBtn) {
+            sidebarBtn.click();
+        }
+    }
+    </script>
+
+    <style>
+    /* 2. Gaya Butang Floating Khas (Sentiasa Terapung Di Penjuru Atas Kiri) */
+    #custom-sidebar-btn {
+        position: fixed !important;
+        top: 12px !important;
+        left: 12px !important;
+        z-index: 9999999 !important;
+        background-color: #1e293b !important;
+        color: #ffffff !important;
+        border: 1px solid #475569 !important;
+        border-radius: 8px !important;
+        padding: 8px 14px !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.3) !important;
+        cursor: pointer !important;
+    }
+
+    #custom-sidebar-btn:hover {
+        background-color: #334155 !important;
+    }
+
+    /* 3. Sembunyikan Header & Profile Badge Asal */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+    [data-testid="stStatusWidget"], .stAppBadge, footer {
+        display: none !important;
+    }
+
     /* 1. Sembunyikan Badge Profil & Viewer Card (Bawah Kanan) */
     [data-testid="stStatusWidget"],
     .stAppBadge,

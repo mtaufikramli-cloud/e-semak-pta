@@ -288,32 +288,6 @@ st.markdown(
         display: none !important;
     }
 
-    /* A. Sembunyikan Profil Badge, Mahkota & Footer (Bawah Kanan) */
-    [data-testid="stStatusWidget"],
-    .stAppBadge,
-    footer {
-        display: none !important;
-        visibility: hidden !important;
-    }
-
-    /* B. Sembunyikan Menu Kanan Header (Deploy & 3 Titik) */
-    [data-testid="stToolbar"],
-    [data-testid="stDecoration"] {
-        display: none !important;
-    }
-
-    /* C. MEMULIHKAN BUTANG SIDEBAR (>) KAT PHONE VIEW */
-    header[data-testid="stHeader"] {
-        background: transparent !important;
-    }
-
-    [data-testid="stSidebarCollapsedControl"],
-    button[data-testid="stBaseButton-header"] {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        z-index: 999999 !important;
-    }
     </style>
     """,
     unsafe_allow_html=True,

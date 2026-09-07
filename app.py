@@ -725,32 +725,33 @@ st.markdown("""
         text-decoration: underline;
     }
 
-    /* 1. Kekalkan Header Lutsinar Tanpa Halang Butang */
-    header[data-testid="stHeader"] {
-        background: transparent !important;
-        height: 3rem !important;
+    /* 1. Kekalkan kebenaran untuk kontena header memaparkan elemen anak */
+    div[data-testid="stHeader"] {
+        background-color: transparent !important;
+        z-index: 99999 !important;
+        display: block !important;
+        visibility: visible !important;
     }
 
-    /* 2. Paksa Butang Toggle Sidebar (>) Keluar di Telefon */
-    button[data-testid="stBaseButton-header"],
-    [data-testid="stSidebarCollapseButton"],
-    [data-testid="stSidebarCollapsedControl"] {
+    /* 2. Sasar butang pemicu sidebar secara khusus di peringkat iframe utama */
+    div[data-testid="stHeader"] button,
+    div[data-testid="stSidebarCollapsedControl"],
+    div[data-testid="stSidebarCollapseButton"] button {
         display: flex !important;
         visibility: visible !important;
         opacity: 1 !important;
         position: fixed !important;
         top: 10px !important;
         left: 10px !important;
-        z-index: 999999 !important;
+        z-index: 100000 !important;
         background-color: #ffffff !important;
-        border: 1px solid #e5e7eb !important;
-        border-radius: 8px !important;
-        box-shadow: 0px 2px 5px rgba(0,0,0,0.1) !important;
+        border: 1px solid #c3c7cb !important;
+        border-radius: 6px !important;
+        color: #000000 !important;
     }
 
-    /* 3. Sembunyikan Elemen Lain Dalam Header (Fork/Menu Kanan) */
-    [data-testid="stToolbar"],
-    [data-testid="stDecoration"] {
+    /* 3. Sembunyikan HANYA menu kanan (Deploy / 3-Dots) tanpa usik butang kiri */
+    div[data-testid="stToolbar"] {
         display: none !important;
     }
     </style>

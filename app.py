@@ -314,11 +314,19 @@ if st.session_state["user"] is None:
                         st.error("⚠️ Nama pengguna ini telah berdaftar dalam sistem.")
                     else:
                         try:
+                            # KIRA TARIKH TAMAT LESEN: 6 BULAN (180 HARI) DARI TARIKH HARI INI
+                            tarikh_tamat_default = (
+                                datetime.now().date() + timedelta(days=180)
+                            )
+
                             supabase.table("pengguna").insert({
                                 "username": new_user_bersih,
                                 "password_hash": hash_password(new_pass),
                                 "baki_semakan": 5,
                                 "tarikh_terakhir": str(datetime.now().date()),
+                                "tarikh_tamat_lesen": str(
+                                    tarikh_tamat_default
+                                ),  # <--- HANTAR TARIKH 6 BULAN
                                 "status_lesen": "aktif",
                                 "had_harian": 5,
                                 "perlu_tukar_pass": False,

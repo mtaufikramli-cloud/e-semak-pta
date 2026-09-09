@@ -586,6 +586,22 @@ abaikan_appendix = True
 abaikan_pagenum_appendix = True
 
 with st.sidebar:
+    # =========================================================
+    # PAUTAN MANUAL PENGGUNA DI SIDEBAR
+    # =========================================================
+    # st.markdown("---")
+    st.markdown("### 📖 Panduan Penggunaan")
+
+    # Link fail PDF terus dari GitHub Raw
+    url_pdf_manual = "https://drive.google.com/file/d/17Wt0OdsUj9UILwZbqw6_ghIT0Wg-H9-r/view?usp=sharing"
+
+    # Paparkan butang muat turun
+    st.link_button(
+        "📄 Muat Turun Manual Pengguna (PDF)",
+        url_pdf_manual,
+        use_container_width=True,
+    )
+
     # Format tarikh tamat lesen ke format DD/MM/YYYY
     tarikh_tamat_raw = current_user.get("tarikh_tamat_lesen")
     if tarikh_tamat_raw:

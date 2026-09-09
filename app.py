@@ -54,6 +54,20 @@ if "user" not in st.session_state:
     st.session_state["user"] = None
 
 # =========================================================
+# SEMBUNYIKAN BADGE & MENU STREAMLIT
+# =========================================================
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            .stAppViewerBadge {display: none;}
+            [data-testid="stStatusWidget"] {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# =========================================================
 # 2. SAMBUNGAN SUPABASE
 # =========================================================
 @st.cache_resource

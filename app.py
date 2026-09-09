@@ -240,7 +240,7 @@ if st.session_state["user"] is None:
             with st.form("form_login"):
                 username = st.text_input("Nama Pengguna (Username)", placeholder="Masukkan username anda...")
                 password = st.text_input("Kata Laluan", type="password", placeholder="Masukkan kata laluan...")
-                submit_login = st.form_submit_button("🚀 Log Masuk Akses", type="primary", use_container_width="stretch")
+                submit_login = st.form_submit_button("🚀 Log Masuk Akses", type="primary", width="stretch")
 
             if submit_login:
                 username_bersih = username.strip()
@@ -284,7 +284,7 @@ if st.session_state["user"] is None:
                 )
 
                 submit_register = st.form_submit_button(
-                    "✨ Daftar Akaun Baharu", type="primary", use_container_width="stretch"
+                    "✨ Daftar Akaun Baharu", type="primary", width="stretch"
                 )
 
             if submit_register:
@@ -376,7 +376,7 @@ if st.session_state["user"] is None:
                 simpan_pass = st.form_submit_button(
                     "🔒 Simpan Kata Laluan Baharu & Teruskan",
                     type="primary",
-                    use_container_width="stretch",
+                    width="stretch",
                 )
 
                 if simpan_pass:
@@ -494,7 +494,7 @@ if current_u and current_u.get("perlu_tukar_pass") is True:
             btn_submit = st.form_submit_button(
                 "✨ Simpan Kata Laluan & Masuk",
                 type="primary",
-                use_container_width="stretch",
+                width="stretch",
             )
 
             if btn_submit:
@@ -600,13 +600,13 @@ with st.sidebar:
         st.link_button(
             "📹 Tonton Video Tutorial (3 Min)",
             url_video_tutorial,
-            use_container_width="stretch",
+            width="stretch",
         )
 
         st.link_button(
             "📄 Muat Turun Manual Pengguna (PDF)",
             url_pdf_manual,
-            use_container_width="stretch",
+            width="stretch",
         )
 
     # Format tarikh tamat lesen ke format DD/MM/YYYY
@@ -690,7 +690,7 @@ with st.sidebar:
     else:
         mod_halaman = "📄 Semakan Laporan PTA"
 
-    if st.button("🚪 Log Keluar", type="secondary", use_container_width="stretch"):
+    if st.button("🚪 Log Keluar", type="secondary", width="stretch"):
         st.session_state["user"] = None
         st.rerun()
 
@@ -886,7 +886,7 @@ if mod_halaman == "📊 Dashboard Admin":
                     "Tarikh Tamat Lesen": tarikh_formatted,
                 })
 
-            st.dataframe(data_jadual, use_container_width="stretch", hide_index=True)
+            st.dataframe(data_jadual, width="stretch", hide_index=True)
         else:
             st.info("Tiada data pengguna dijumpai.")
 
@@ -926,7 +926,7 @@ if mod_halaman == "📊 Dashboard Admin":
                     format="YYYY-MM-DD"
                 )
 
-                if st.form_submit_button("💾 Simpan Perubahan", type="primary", use_container_width="stretch"):
+                if st.form_submit_button("💾 Simpan Perubahan", type="primary", width="stretch"):
                     supabase.table("pengguna").update({
                         "baki_semakan": new_baki,
                         "had_harian": new_had,
@@ -952,7 +952,7 @@ if mod_halaman == "📊 Dashboard Admin":
                 if st.button(
                     "🗑️ Padam Pengguna Ini",
                     type="secondary",
-                    use_container_width="stretch",
+                    width="stretch",
                     disabled=not confirm_padam
                 ):
                     supabase.table("pengguna").delete().eq("id", user_target["id"]).execute()
@@ -975,7 +975,7 @@ if mod_halaman == "📊 Dashboard Admin":
                 "Pilih Pengguna:", options=senarai_user, key="reset_user_select"
             )
             hantar_reset = st.form_submit_button(
-                "🔄 Reset Kata Laluan (123456)", use_container_width="stretch"
+                "🔄 Reset Kata Laluan (123456)", width="stretch"
             )
 
             if hantar_reset:
@@ -1028,7 +1028,7 @@ if mod_halaman == "📊 Dashboard Admin":
                     format="YYYY-MM-DD",
                 )
 
-            if st.form_submit_button("✨ Cipta Akaun", use_container_width="stretch"):
+            if st.form_submit_button("✨ Cipta Akaun", width="stretch"):
                 admin_new_user_bersih = admin_new_user.strip()
                 if admin_new_user_bersih and admin_new_pass:
                     cek_user = (
@@ -1083,7 +1083,7 @@ if mod_halaman == "📊 Dashboard Admin":
                 st.divider()
                 set_status_semakan = st.toggle("Aktifkan Mod Semakan PTA untuk Semua Pengguna", value=tetapan_semasa.get("dibenarkan_semak", True))
 
-                if st.form_submit_button("💾 Simpan Tetapan Global", type="primary", use_container_width="stretch"):
+                if st.form_submit_button("💾 Simpan Tetapan Global", type="primary", width="stretch"):
                     supabase.table("tetapan_sistem").update({
                         "margin_kiri": set_left,
                         "margin_kanan": set_right,
@@ -1840,7 +1840,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                     st.image(
                         img,
                         caption=f"Pratonton MS {page_num + 1}",
-                        use_container_width="stretch",
+                        width="stretch",
                     )
 
                 with col_details:
@@ -1887,7 +1887,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             "⭐ 1. Klik Di Sini Untuk Isi Borang Kaji Selidik",
             "https://forms.gle/C4sLEf1zmCrbneqT8",
             type="primary",
-            use_container_width="stretch"
+            width="stretch"
         )
 
         # Callback untuk menghantar Log Sesi 1 sebaik sahaja pengguna mentandakan checkbox
@@ -1937,7 +1937,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             if st.button(
                 "⚙️ Jana Dokumen PDF Akhir",
                 type="primary",
-                use_container_width="stretch",  # Pembetulan ralat parameter width='stretch'
+                width="stretch",  # Pembetulan ralat parameter width='stretch'
             ):
                 with st.spinner("Menjana kesemua variasi laporan PDF... Sila tunggu sebentar."):
                     # 1. Jana Laporan Ringkasan

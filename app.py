@@ -2,7 +2,7 @@ import base64
 import io
 import re
 from fpdf import FPDF
-from PIL import Image
+from PIL import Image, ImageDraw
 import pymupdf as fitz
 import streamlit as st
 import streamlit.components.v1 as components
@@ -21,6 +21,263 @@ import time
 import threading
 import requests
 from supabase import create_client
+
+PT_TO_MM = 2.83465
+
+def is_page_number(text):
+    txt = text.strip().lower()
+    return txt.isdigit() or bool(re.match(r'^(?=[i|v|x|l|c|d|m]+$)[i|v|x|l|c|d|m]+$', txt))
+
+def format_margin_msg(jenis_elemen, teks_sampel, pos_pt, target_mm, jenis_margin="Kiri"):
+    pos_mm = round(pos_pt / PT_TO_MM, 1)
+    terkeluar_mm = round(abs((target_mm * PT_TO_MM) - pos_pt) / PT_TO_MM, 1)
+    teks_clean = f"'{teks_sampel[:15]}...'" if teks_sampel else ""
+    return f"Luar Margin {jenis_margin}: {jenis_elemen} {teks_clean} (Kawasan: {pos_mm}mm | Terkeluar {terkeluar_mm}mm dari {target_mm}mm)"
+
+TOLERANCE_MM = 1.5  # Laraskan ke 2.0 jika masih terlalu sensitif
+
+def check_margin_kiri_violations(page, target_margin_mm=40, tolerance_mm=1.5):
+    errors = []
+    limit_pt = (target_margin_mm - tolerance_mm) * PT_TO_MM
+    text_page = page.get_text("dict")
+
+    # 1. Semak Teks
+    for block in text_page.get("blocks", []):
+        for line in block.get("lines", []):
+            x0, y0, x1, y1 = line["bbox"]
+            line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+            if x0 < limit_pt and line_text:
+                if not is_page_number(line_text):
+                    msg = format_margin_msg("Teks", line_text, x0, target_margin_mm, "Kiri")
+                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+
+    # 2. Semak Titik/Garisan Vektor (Dot Leaders / Line Shapes)
+    for draw in page.get_drawings():
+        rect = draw["rect"]
+        # Mengabaikan garisan tepi bingkai kertas (> 80% tinggi muka surat)
+        if 5 < rect.x0 < limit_pt and (rect.y1 - rect.y0) <= (page.rect.height * 0.8):
+            bbox_tuple = (rect.x0, rect.y0, rect.x1, rect.y1)
+            if not any(e["bbox"] == bbox_tuple for e in errors):
+                msg = format_margin_msg("Elemen Garis/Titik '.......'", "", rect.x0, target_margin_mm, "Kiri")
+                errors.append({"bbox": bbox_tuple, "msg": msg})
+
+    return errors
+
+
+def check_margin_kanan_violations(page, target_margin_mm=25, tolerance_mm=TOLERANCE_MM):
+    errors = []
+    limit_pt = (target_margin_mm - tolerance_mm) * PT_TO_MM
+    page_width = page.rect.width
+    text_page = page.get_text("dict")
+
+    for block in text_page.get("blocks", []):
+        for line in block.get("lines", []):
+            x0, y0, x1, y1 = line["bbox"]
+            line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+            dist_from_edge_pt = page_width - x1
+
+            # Hanya kembalikan ralat jika terkeluar MELEBIHI tolerance (1.5mm)
+            if dist_from_edge_pt < limit_pt and line_text:
+                if not is_page_number(line_text):
+                    msg = format_margin_msg("Teks", line_text, dist_from_edge_pt, target_margin_mm, "Kanan")
+                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+    return errors
+
+
+def check_margin_atas_violations(page, target_margin_mm=25, tolerance_mm=TOLERANCE_MM):
+    errors = []
+    limit_pt = (target_margin_mm - tolerance_mm) * PT_TO_MM
+    text_page = page.get_text("dict")
+
+    for block in text_page.get("blocks", []):
+        for line in block.get("lines", []):
+            x0, y0, x1, y1 = line["bbox"]
+            line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+            if y0 < limit_pt and line_text:
+                if not is_page_number(line_text):
+                    msg = format_margin_msg("Teks", line_text, y0, target_margin_mm, "Atas")
+                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+    return errors
+
+
+def check_margin_bawah_violations(page, target_margin_mm=25, tolerance_mm=TOLERANCE_MM):
+    errors = []
+    limit_pt = (target_margin_mm - tolerance_mm) * PT_TO_MM
+    page_height = page.rect.height
+    text_page = page.get_text("dict")
+
+    for block in text_page.get("blocks", []):
+        for line in block.get("lines", []):
+            x0, y0, x1, y1 = line["bbox"]
+            line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+            dist_from_edge_pt = page_height - y1
+
+            if dist_from_edge_pt < limit_pt and line_text:
+                if not is_page_number(line_text):
+                    msg = format_margin_msg("Teks", line_text, dist_from_edge_pt, target_margin_mm, "Bawah")
+                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+    return errors
+
+def check_line_spacing(page, min_gap_pt=15.0):
+    """
+    Kesan teks perenggan yang menggunakan Single Space (< 15pt) 
+    berbanding 1.5 Spacing (GPPTA 6.3).
+    """
+    errors = []
+    text_page = page.get_text("dict")
+    
+    for block in text_page.get("blocks", []):
+        lines = block.get("lines", [])
+        if len(lines) < 2:
+            continue
+            
+        for i in range(len(lines) - 1):
+            curr_line = lines[i]
+            next_line = lines[i + 1]
+
+            curr_y0 = curr_line["bbox"][1]
+            next_y0 = next_line["bbox"][1]
+            line_gap = next_y0 - curr_y0
+
+            # Single space untuk Arial 11pt biasanya ~12pt-14pt.
+            # Jika line_gap < 15pt, ia dikesan sebagai Single Space.
+            if 5 < line_gap < min_gap_pt:
+                line_text = "".join([s.get("text", "") for s in curr_line.get("spans", [])]).strip()
+                
+                # Filter: Hanya semak ayat panjang (>35 aksara) supaya tidak tersalah kesan tajuk/jadual
+                if len(line_text) > 35 and not is_page_number(line_text):
+                    msg = f"Jarak Baris Ralat: Dikesan Single Space ({line_gap:.1f}pt) - Sepatutnya 1.5 Spacing"
+                    errors.append({"bbox": curr_line["bbox"], "msg": msg})
+                    
+    return errors
+
+def is_page_number(text):
+    """Semak jika teks ialah digit atau angka Romani"""
+    txt = text.strip().lower()
+    if txt.isdigit():
+        return True
+    if re.match(r'^(?=[i|v|x|l|c|d|m]+$)[i|v|x|l|c|d|m]+$', txt):
+        return True
+    return False
+
+def tambah_garis_margin_ke_pdf_page(page):
+    """
+    Melukis garisan margin putus-putus secara terus pada fail PDF (vektor).
+    """
+    MM_TO_PT = 72.0 / 25.4
+    rect = page.rect
+    width_pt, height_pt = rect.width, rect.height
+    
+    # Orientasi
+    if height_pt >= width_pt: # Portrait
+        top_mm, right_mm, bottom_mm, left_mm = 25.0, 25.0, 25.0, 40.0
+    else: # Landscape
+        top_mm, right_mm, bottom_mm, left_mm = 40.0, 25.0, 25.0, 25.0
+
+    # Bounding box margin (Points)
+    margin_rect = fitz.Rect(
+        left_mm * MM_TO_PT,
+        top_mm * MM_TO_PT,
+        width_pt - (right_mm * MM_TO_PT),
+        height_pt - (bottom_mm * MM_TO_PT)
+    )
+
+    # Lukis Segi Empat Putus-Putus Vektor pada Muka Surat PDF
+    page.draw_rect(
+        margin_rect, 
+        color=(1, 0, 0),        # Warna Merah (RGB: 0-1)
+        width=0.8,              # Ketebalan garisan
+        dashes="[3 3] 0",       # Corak Garis Putus-putus (Dash Pattern)
+        overlay=True            # Dilukis di atas lapisan teks
+    )
+
+# Inisialisasi session_state untuk ignored_errors jika belum wujud
+if "ignored_errors" not in st.session_state:
+    st.session_state.ignored_errors = set()  # Menggunakan set (atau list: [])
+
+def lukis_garis_margin_gpsta(page, image_pil):
+    """
+    Melukis garis putus-putus merah samar (Margin Boundary) pada imej halaman PDF.
+    
+    Spesifikasi GPPTA 2026:
+    - Portrait : Atas, Kanan, Bawah = 25mm | Kiri = 40mm
+    - Landscape: Atas = 40mm | Kanan, Bawah, Kiri = 25mm
+    """
+    # 1. Tukar mm kepada Points (1 mm = 72 / 25.4 points)
+    MM_TO_PT = 72.0 / 25.4
+    
+    # 2. Dapatkan saiz sebenar halaman PDF (dalam points)
+    rect = page.rect
+    width_pt = rect.width
+    height_pt = rect.height
+    
+    # 3. Tentukan orientasi dan tetapkan nilai margin (dalam mm)
+    is_portrait = height_pt >= width_pt
+    
+    if is_portrait:
+        top_mm, right_mm, bottom_mm, left_mm = 25.0, 25.0, 25.0, 40.0
+    else: # Landscape
+        top_mm, right_mm, bottom_mm, left_mm = 40.0, 25.0, 25.0, 25.0
+        
+    # 4. Tukar margin mm kepada koordinat Points
+    top_pt = top_mm * MM_TO_PT
+    right_pt = width_pt - (right_mm * MM_TO_PT)
+    bottom_pt = height_pt - (bottom_mm * MM_TO_PT)
+    left_pt = left_mm * MM_TO_PT
+
+    # 5. Dapatkan nisbah skala imej PIL berbanding saiz asal PDF
+    img_w, img_h = image_pil.size
+    scale_x = img_w / width_pt
+    scale_y = img_h / height_pt
+
+    # 6. Tukar koordinat ke skala Piksel Imej
+    x1 = left_pt * scale_x
+    y1 = top_pt * scale_y
+    x2 = right_pt * scale_x
+    y2 = bottom_pt * scale_y
+
+    # 7. Lukis Garis Putus-Putus Merah Samar menggunakan Pillow
+    # Warna RGBA: Merah (255, 0, 0) dengan Saluran Alfa/Keperluasan (80-100 untuk kesan samar)
+    draw = ImageDraw.Draw(image_pil, "RGBA")
+    
+    # Warna merah samar (RGBA)
+    merah_samar = (255, 0, 0, 90) 
+    dash_length = 10 # Panjang garis putus-putus (piksel)
+    space_length = 6 # Jarak antara garis (piksel)
+
+    def draw_dashed_line(draw_obj, p1, p2, color, width=2):
+        """Fungsi pembantu untuk melukis garis putus-putus"""
+        x_start, y_start = p1
+        x_end, y_end = p2
+        
+        # Hitung jarak
+        dx = x_end - x_start
+        dy = y_end - y_start
+        distance = (dx**2 + dy**2)**0.5
+        
+        if distance == 0:
+            return
+            
+        # Vektor unit
+        ux = dx / distance
+        uy = dy / distance
+        
+        curr_dist = 0
+        while curr_dist < distance:
+            next_dist = min(curr_dist + dash_length, distance)
+            start_pos = (x_start + ux * curr_dist, y_start + uy * curr_dist)
+            end_pos = (x_start + ux * next_dist, y_start + uy * next_dist)
+            
+            draw_obj.line([start_pos, end_pos], fill=color, width=width)
+            curr_dist += dash_length + space_length
+
+    # Lukis 4 garisan pembatas kotak margin
+    draw_dashed_line(draw, (x1, y1), (x2, y1), merah_samar, width=2) # Garis Atas
+    draw_dashed_line(draw, (x2, y1), (x2, y2), merah_samar, width=2) # Garis Kanan
+    draw_dashed_line(draw, (x2, y2), (x1, y2), merah_samar, width=2) # Garis Bawah
+    draw_dashed_line(draw, (x1, y2), (x1, y1), merah_samar, width=2) # Garis Kiri
+
+    return image_pil
 
 # =========================================================
 # AMBIL TETAPAN SYSTEM DARI SUPABASE
@@ -1250,13 +1507,43 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
 
         return text.encode("latin-1", "replace").decode("latin-1")
 
-
     def generate_full_audit_pdf(doc, errors_per_page, ignored_errors):
-        """Menjana PDF Audit Lanskap dengan sokongan halaman sambungan jika isu terlalu banyak."""
+        """
+        Menjana PDF Audit Lanskap Side-by-Side secara bersih 
+        tanpa latar belakang / bingkai kelabu bertindih.
+        """
+        pdf_bytes = doc.tobytes()
+        annotated_doc = fitz.open("pdf", pdf_bytes)
+
+        # 1. Tandakan kotak ralat & garisan margin pada dokumen
+        for p_num in range(len(annotated_doc)):
+            p = annotated_doc[p_num]
+            
+            # Lukis garisan margin mengikut orientasi sebenar
+            tambah_garis_margin_ke_pdf_page(p)
+
+            # Lukis kotak ralat merah
+            raw_errs = []
+            if isinstance(errors_per_page, list):
+                raw_errs = errors_per_page[p_num] if p_num < len(errors_per_page) else []
+            elif isinstance(errors_per_page, dict):
+                raw_errs = errors_per_page.get(p_num, [])
+
+            for idx, err in enumerate(raw_errs):
+                err_id = f"p{p_num+1}_{idx}"
+                if isinstance(err, dict) and err_id not in ignored_errors:
+                    if err.get("bbox"):
+                        p.draw_rect(err["bbox"], color=(1, 0, 0), width=1.5)
+
         output_pdf = fitz.open()
 
-        for page_num in range(len(doc)):
-            # 1. Tapis isu yang aktif bagi muka surat ini berdasarkan ID Dinamik (p{page_num+1}_{i})
+        # 2. Bina Laporan Side-by-Side
+        for page_num in range(len(annotated_doc)):
+            src_page = annotated_doc[page_num]
+            src_rect = src_page.rect
+            
+            is_landscape_page = (src_rect.width > src_rect.height) or (src_page.rotation in [90, 270])
+
             if isinstance(errors_per_page, list):
                 raw_issues = errors_per_page[page_num] if page_num < len(errors_per_page) else []
             elif isinstance(errors_per_page, dict):
@@ -1274,19 +1561,27 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             total_issues = len(page_issues)
             is_first_subpage = True
 
-            # Loop ini akan terus cipta muka surat baru selagi isu belum habis dipaparkan
             while True:
-                # Cipta Halaman A4 Lanskap (842 x 595 pt)
+                # Bina halaman Side-by-Side (A4 Landscape: 842 x 595 pt)
                 new_page = output_pdf.new_page(width=842, height=595)
 
-                # --- PANEL KIRI (PDF Original / Info Sambungan) ---
-                rect_left = fitz.Rect(10, 10, 410, 585)
+                # --- PANEL KIRI (PRATONTON DOKUMEN SAHAJA) ---
                 if is_first_subpage:
-                    # Papar pratonton muka surat PDF asal pada sub-halaman pertama
-                    new_page.show_pdf_page(rect_left, doc, page_num)
+                    if is_landscape_page:
+                        paper_box = fitz.Rect(15, 140, 405, 420)
+                    else:
+                        paper_box = fitz.Rect(15, 15, 405, 580)
+
+                    # TAMPAL MUKA SURAT PDF SECARA DIRECT (TANPA DRAW_RECT KELABU)
+                    rot_val = src_page.rotation
+                    new_page.show_pdf_page(
+                        paper_box, 
+                        annotated_doc, 
+                        page_num, 
+                        rotate=rot_val, 
+                        keep_proportion=True
+                    )
                 else:
-                    # Jika halaman sambungan, buat kotak maklumat ringkas di sebelah kiri
-                    new_page.draw_rect(rect_left, color=(0.7, 0.7, 0.7), fill=(0.95, 0.95, 0.95), width=0.5)
                     new_page.insert_text(
                         fitz.Point(50, 280), 
                         f"SAMBUNGAN SENARAI ISU\nMUKA SURAT {page_num + 1}", 
@@ -1294,14 +1589,10 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                         color=(0.3, 0.3, 0.3)
                     )
 
-                # --- GARISAN PEMISAH (Kiri vs Kanan) ---
-                new_page.draw_line(fitz.Point(420, 15), fitz.Point(420, 580), color=(0.2, 0.2, 0.2), width=1.5)
+                # --- GARISAN PEMISAH TENGAH ---
+                new_page.draw_line(fitz.Point(420, 15), fitz.Point(420, 580), color=(0.7, 0.7, 0.7), width=1)
 
-                # --- PANEL KANAN (Senarai Isu) ---
-                panel_rect = fitz.Rect(430, 15, 827, 580)
-                new_page.draw_rect(panel_rect, color=(0.85, 0.85, 0.85), fill=(0.98, 0.98, 0.98), width=0.5)
-
-                # Tajuk Panel Kanan
+                # --- PANEL KANAN (SENARAI ISU) ---
                 header_title = f"MUKA SURAT {page_num + 1} - SENARAI ISU DIKESAN"
                 if not is_first_subpage:
                     header_title += " (SAMBUNGAN)"
@@ -1311,16 +1602,12 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
 
                 y_pos = 70
 
-                # Jika tiada isu langsung pada muka surat ini
                 if total_issues == 0:
                     new_page.insert_text(fitz.Point(445, y_pos), "✅ Tiada isu dikesan pada muka surat ini.", fontsize=10, color=(0, 0.5, 0))
                     break
 
-                # Cetak senarai isu sehingga bawah panel (y_pos <= 540)
                 while issue_index < total_issues and y_pos <= 540:
                     issue = page_issues[issue_index]
-
-                    # Ekstrak ayat isu spesifik UI
                     ayat_isu = (
                         issue.get("text") or 
                         issue.get("msg") or 
@@ -1330,21 +1617,18 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                     )
                     ayat_isu = ayat_isu.replace("Abaikan (Bypass): ", "").strip()
 
-                    # Cetak Teks Isu
                     new_page.insert_text(fitz.Point(445, y_pos), f"{issue_index + 1}. ⚠️ {ayat_isu}", fontsize=9.5, color=(0.8, 0.1, 0.1))
 
                     y_pos += 22
                     issue_index += 1
 
-                # Jika semua isu muka surat ini dah selesai dicetak, keluar loop
                 if issue_index >= total_issues:
                     break
 
-                # Jika masih ada isu berbaki, tandakan sub-page seterusnya
                 is_first_subpage = False
 
+        annotated_doc.close()
         return output_pdf.write()
-
 
     def generate_pdf_report(filtered_errors, total_pages):
         pdf = FPDF()
@@ -1410,7 +1694,6 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
 
         return bytes(pdf.output())
 
-
     def generate_annotated_report(doc_input, all_pages_errors, ignored_set):
         pdf_buffer = io.BytesIO()
         doc_input.save(pdf_buffer)
@@ -1419,16 +1702,21 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
 
         for page_num, errors in enumerate(all_pages_errors):
             page = annotated_doc[page_num]
+            
+            # 1. Lukis garisan margin putus-putus dinamik
+            tambah_garis_margin_ke_pdf_page(page)
+
+            # 2. Lukis kotak merah ralat
             for i, err in enumerate(errors):
                 err_id = f"p{page_num+1}_{i}"
                 if err.get("bbox") and err_id not in ignored_set:
                     page.draw_rect(err["bbox"], color=(1, 0, 0), width=1.5)
 
         out_buffer = io.BytesIO()
+        # PASTIKAN: Simpan tanpa mengubah kekemasan halaman
         annotated_doc.save(out_buffer)
         annotated_doc.close()
         return out_buffer.getvalue()
-
 
     def get_base_filename(uploaded_filename):
         """Mengambil nama fail tanpa ekstensi .pdf."""
@@ -1505,6 +1793,10 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             st.session_state.annotated_pdf_bytes = None
 
         def toggle_bypass(err_id):
+            # TAMBAH BARIS INI: Pastikan key wujud sebelum disemak
+            if "ignored_errors" not in st.session_state:
+                st.session_state.ignored_errors = set()
+
             if err_id in st.session_state.ignored_errors:
                 st.session_state.ignored_errors.remove(err_id)
             else:
@@ -1548,6 +1840,24 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                 k in page_text_lower for k in ["appendix", "appendices", "lampiran"]
             )
 
+            page_errors = []  # Senarai ralat untuk muka surat ini
+
+            # Tentukan orientasi muka surat & nilai sasaran margin
+            is_landscape = rect.width > rect.height
+            target_kiri_mm = 25 if is_landscape else 40
+            target_atas_mm = 40 if is_landscape else 25
+            target_kanan_mm = 25
+            target_bawah_mm = 25
+
+            # Panggil semakan margin 4 sisi
+            page_errors.extend(check_margin_kiri_violations(page, target_margin_mm=target_kiri_mm))
+            page_errors.extend(check_margin_atas_violations(page, target_margin_mm=target_atas_mm))
+            page_errors.extend(check_margin_kanan_violations(page, target_margin_mm=target_kanan_mm))
+            page_errors.extend(check_margin_bawah_violations(page, target_margin_mm=target_bawah_mm))
+
+            # Panggil semakan 1.5 spacing
+            page_errors.extend(check_line_spacing(page))
+
             has_list_header = any(
                 k in page_text_lower
                 for k in [
@@ -1568,43 +1878,125 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                 cur_m_bottom = rect.height - MARGIN_RIGHT_PT
                 cur_m_left = MARGIN_TOP_PT
                 cur_m_right = rect.width - MARGIN_BOTTOM_PT
+                target_kiri_mm = 25   # 👈 TAMBAH BARIS INI
             else:
                 cur_m_top = MARGIN_TOP_PT
                 cur_m_bottom = rect.height - MARGIN_BOTTOM_PT
                 cur_m_left = MARGIN_LEFT_PT
                 cur_m_right = rect.width - MARGIN_RIGHT_PT
+                target_kiri_mm = 40   # 👈 TAMBAH BARIS INI
 
-            # PASS 1: PRE-SCANNING NOMBOR MUKA SURAT
+            # Tentukan nilai sasaran margin piawai GPPTA 2026
+            target_kiri_mm = 25 if is_landscape else 40
+            target_atas_mm = 40 if is_landscape else 25
+            target_kanan_mm = 25
+            target_bawah_mm = 25
+
+            # Panggil semakan seragam 4 sisi
+            page_errors.extend(check_margin_kiri_violations(page, target_margin_mm=target_kiri_mm))
+            page_errors.extend(check_margin_atas_violations(page, target_margin_mm=target_atas_mm))
+            page_errors.extend(check_margin_kanan_violations(page, target_margin_mm=target_kanan_mm))
+            page_errors.extend(check_margin_bawah_violations(page, target_margin_mm=target_bawah_mm))
+            
+            # 📌 ---------------------------------------------------------
+            # TAMBAH 2 BARIS INI DI SINI:
+            # ---------------------------------------------------------
+            target_kiri_mm = 25 if is_landscape else 40
+            margin_kiri_errs = check_margin_kiri_violations(page, target_margin_mm=target_kiri_mm)
+
+            # =========================================================================
+            # PASS 1: PRE-SCANNING NOMBOR MUKA SURAT (Berasaskan Vektor Text PyMuPDF)
+            # =========================================================================
             pagenum_bboxes = []
             has_pagenum_found = False
 
-            words = page.get_text("words")
-            for w in words:
-                wx0, wy0, wx1, wy1, word_str = w[0], w[1], w[2], w[3], w[4]
-                clean_w = re.sub(r"[^a-zA-Z0-9]", "", word_str.lower())
-                is_valid_num = clean_w.isdigit() or is_roman_numeral(clean_w)
+            w_rect, h_rect = rect.width, rect.height
 
-                if is_valid_num:
-                    if is_landscape:
-                        if wx0 < 150 or wy0 < 120 or wy0 > (rect.height - 120):
-                            has_pagenum_found = True
-                            pagenum_bboxes.append((wx0, wy0, wx1, wy1))
-                    else:
-                        if wy0 > (rect.height - 100):  # Zon Footer
-                            right_min = rect.width * 0.60  
-                            if wx0 >= right_min:
+            # Pengesanan Lanskap
+            is_landscape_page = is_landscape or (w_rect > h_rect) or (page.rotation in [90, 270])
+
+            # Imbas blok teks (blocks sudah ada dalam kod anda)
+            for b in blocks:
+                if "lines" not in b:
+                    continue
+                for line in b["lines"]:
+                    for span in line["spans"]:
+                        text_str = span["text"].strip()
+                        
+                        # Pintas teks kosong atau nombor sub-tajuk (seperti 3.4 dan 3.3)
+                        if not text_str or "." in text_str:
+                            continue
+
+                        clean_w = re.sub(r"[^a-zA-Z0-9]", "", text_str.lower())
+                        
+                        if clean_w.isdigit() or is_roman_numeral(clean_w):
+                            # Abaikan jika digit terlalu panjang (bukan nombor muka surat)
+                            if len(clean_w) > 4:
+                                continue
+
+                            sx0, sy0, sx1, sy1 = span["bbox"]
+
+                            # Semak kawasan margin/luar kandung (Top, Bottom, Left, Right)
+                            is_in_margin_zone = (
+                                (sx0 < 200) or (sy0 < 200) or 
+                                (sy0 > (h_rect - 200)) or (sx0 > (w_rect - 200))
+                            )
+
+                            if is_in_margin_zone:
                                 has_pagenum_found = True
-                                pagenum_bboxes.append((wx0, wy0, wx1, wy1))
-                            else:
-                                loc_name = "bawah tengah" if wx0 >= (rect.width * 0.33) else "bawah kiri"
-                                page_errors.append(
-                                    {
-                                        "msg": f"Nombor muka surat '{word_str}' berada di kedudukan tidak sah ({loc_name}). GP PTA 2026 mewajibkan di bahagian bawah penjuru sebelah kanan.",
-                                        "bbox": (wx0, wy0, wx1, wy1),
-                                    }
-                                )
+                                pagenum_bboxes.append((sx0, sy0, sx1, sy1))
+
+                                # Ambil vektor arah tulisan 'dir' daripada PyMuPDF:
+                                # dir = (1, 0)  -> Teks Mendatar (0°)
+                                # dir = (0, -1) -> Teks Menegak/Diputar (90°)
+                                s_dir = span.get("dir", (1, 0))
+                                is_horizontal_text = abs(s_dir[0]) > 0.5  # True jika mendatar 0°
+
+                                if is_landscape_page:
+                                    # Standard GPPTA Lanskap: Nombor M/S MESTI diputar 90° (Menegak)
+                                    # Jika is_horizontal_text == True, bermakna nombor '19' dicetak mendatar (0°) -> SALAH!
+                                    if is_horizontal_text:
+                                        page_errors.append({
+                                            "msg": f"Orientasi Nombor M/S '{text_str}' Salah (Mesti Diputar 90° Mengikut Format Jilid)",
+                                            "bbox": (sx0, sy0, sx1, sy1)
+                                        })
+                                else:
+                                    # --- ZON NOMBOR M/S PORTRAIT ---
+                                    if sy0 > (h_rect - 100):
+                                        right_min = w_rect * 0.55
+                                        if sx0 < right_min:
+                                            loc_name = "bawah tengah" if sx0 >= (w_rect * 0.33) else "bawah kiri"
+                                            page_errors.append({
+                                                "msg": f"Nombor muka surat '{text_str}' berada di kedudukan tidak sah ({loc_name}). GP PTA 2026 mewajibkan di bahagian bawah penjuru sebelah kanan.",
+                                                "bbox": (sx0, sy0, sx1, sy1)
+                                            })
 
             # PASS 2: SEMAKAN MARGIN & TEKS
+            # =========================================================================
+            # 1. SEMAKAN MARGIN UNTUK IMEJ / GAMBAR (Cth: Carta Gantt Format Imej)
+            # =========================================================================
+            # 📌 Tambah 2 baris ini di atas 'if images_info:'
+            target_top_mm = 40 if is_landscape else 25
+            target_bottom_mm = 25
+
+            # 1. SEMAKAN MARGIN UNTUK IMEJ / GAMBAR
+            if images_info:
+                for img in images_info:
+                    ix0, iy0, ix1, iy1 = img["bbox"]
+                    
+                    # Semak jika imej melangkaui Margin Atas
+                    if iy0 < (cur_m_top - 2):
+                        msg = format_margin_msg("Imej/Gambar", "", iy0, target_top_mm, "Atas")
+                        page_errors.append({"msg": msg, "bbox": (ix0, iy0, ix1, iy1)})
+                        
+                    # Semak jika imej melangkaui Margin Bawah
+                    if iy1 > (cur_m_bottom + 2):
+                        msg = format_margin_msg("Imej/Gambar", "", iy1, target_bottom_mm, "Bawah")
+                        page_errors.append({"msg": msg, "bbox": (ix0, iy0, ix1, iy1)})
+
+            # =========================================================================
+            # 2. SEMAKAN TEKS & MARGIN TEKS (KOD SEDIA ADA ANDA)
+            # =========================================================================
             for b in blocks:
                 if "lines" in b:
                     for line in b["lines"]:
@@ -1630,22 +2022,15 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                             if is_this_pagenum_span:
                                 continue
 
-                            # Semakan Ralat Margin
+                            # 📌 1. Semakan Ralat Margin Bawah (Kemaskini dengan MM)
                             if y1 > (cur_m_bottom + 2):
-                                page_errors.append(
-                                    {
-                                        "msg": f"Luar Margin Bawah: '{full_line_text[:20]}...'",
-                                        "bbox": bbox,
-                                    }
-                                )
+                                msg = format_margin_msg("Teks", full_line_text, y1, target_bottom_mm, "Bawah")
+                                page_errors.append({"msg": msg, "bbox": bbox})
 
+                            # 📌 2. Semakan Ralat Margin Atas (Kemaskini dengan MM)
                             if y0 < (cur_m_top - 2):
-                                page_errors.append(
-                                    {
-                                        "msg": f"Luar Margin Atas: '{full_line_text[:20]}...'",
-                                        "bbox": bbox,
-                                    }
-                                )
+                                msg = format_margin_msg("Teks", full_line_text, y0, target_top_mm, "Atas")
+                                page_errors.append({"msg": msg, "bbox": bbox})
 
                             # Semakan Jenis & Saiz Font
                             skip_font_check = in_appendix_section or (abaikan_appendix and is_appendix_page)
@@ -1806,21 +2191,47 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             unique_page_errors = all_pages_errors_list[page_num]
             is_landscape = doc[page_num].rect.width > doc[page_num].rect.height
 
-            has_active_errors = any(
-                f"p{page_num+1}_{i}" not in st.session_state.ignored_errors
-                for i in range(len(unique_page_errors))
+            # 📌 1. KIRA JUMLAH ISU AKTIF (TIDAK DIABAIKAN)
+            active_error_count = sum(
+                1 for i in range(len(unique_page_errors))
+                if f"p{page_num+1}_{i}" not in st.session_state.ignored_errors
             )
 
-            status_icon = "⚠️ Ada Isu" if has_active_errors else "✅ Baik / Disemak"
+            # 📌 2. PAPARKAN BILANGAN ISU PADA TAJUK EXPANDER
+            if active_error_count > 0:
+                status_icon = f"⚠️ Ada Isu: {active_error_count}"
+            else:
+                status_icon = "✅ Baik / Disemak"
+
             tag_landscape = " [Landscape]" if is_landscape else ""
+
+            # 📌 LANGKAH 3: KIRA JUMLAH ISU AKTIF & SET KAN STATUS_ICON
+            active_error_count = sum(
+                1 for i in range(len(unique_page_errors))
+                if f"p{page_num+1}_{i}" not in st.session_state.ignored_errors
+            )
+            status_icon = f"⚠️ Ada Isu: {active_error_count}" if active_error_count > 0 else "✅ Baik / Disemak"
 
             with st.expander(
                 f"Muka Surat {page_num + 1}{tag_landscape} - ({status_icon})"
             ):
                 col_img, col_details = st.columns([1, 1])
                 
-                # Buat salinan berasingan untuk render pratonton visual (menghindari penumpukan garisan merah)
+                # Buat salinan berasingan untuk render pratonton visual
                 doc_page = doc[page_num]
+
+                # =========================================================================
+                # 📌 LUKIS KOTAK SEMPADAN SAIZ A4 KABUR (PAGE BORDER)
+                # =========================================================================
+                shape_a4 = doc_page.new_shape()
+                shape_a4.draw_rect(doc_page.rect)
+                shape_a4.finish(
+                    # color=(0.75, 0.75, 0.75),  # Warna kelabu kabur
+                    color=(0.4, 0.4, 0.4),  # Nilai lebih kecil = Garisan lebih gelap/terang
+                    width=1,                    # Ketebalan garisan
+                    dashes="[4 4] 0"            # Garisan putus-putus (pilihan)
+                )
+                shape_a4.commit()
 
                 # Lukis kotak ralat sementara hanya untuk ralat yang TIDAK DIABAIKAN
                 for i, err in enumerate(unique_page_errors):
@@ -1832,11 +2243,15 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                         shape.finish(color=(1, 0, 0), width=1.5)
                         shape.commit()
 
-                # Render imej pratonton
+                # Render imej pratonton (sekarang sudah ada garisan sempadan A4 & kotak ralat)
                 pix = doc_page.get_pixmap(dpi=120)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
                 with col_img:
+                    # 1. Tambah baris ini untuk melukis garisan margin putus-putus pada imej 'img'
+                    img = lukis_garis_margin_gpsta(doc[page_num], img)
+
+                    # 2. Paparkan imej yang telah siap dilukis garisan
                     st.image(
                         img,
                         caption=f"Pratonton MS {page_num + 1}",
@@ -1855,21 +2270,36 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                             page_err_ids.append(err_id)
                             is_ignored = err_id in st.session_state.ignored_errors
 
-                            st.checkbox(
-                                f"Abaikan (Bypass): {err['msg']}",
-                                key=f"cb_{err_id}",
-                                value=is_ignored,
-                                on_change=toggle_bypass,
-                                args=(err_id,),
-                            )
+                            # 📌 SUSUNAN 2 KOLUM: CHECKBOX (KIRI) & KOTAK TEKS READ-ONLY (KANAN)
+                            c_box, c_text = st.columns([1.2, 3], vertical_alignment="center")
+
+                            with c_box:
+                                st.checkbox(
+                                    "Abaikan (Byp...",
+                                    key=f"cb_{err_id}",
+                                    value=is_ignored,
+                                    on_change=toggle_bypass,
+                                    args=(err_id,),
+                                )
+
+                            with c_text:
+                                # Text input 'disabled' menghasilkan kotak kelabu lembut yang boleh di-highlight/copy
+                                st.text_input(
+                                    label=f"label_{err_id}",
+                                    value=err['msg'],
+                                    disabled=True,
+                                    label_visibility="collapsed",
+                                    key=f"txt_{err_id}"
+                                )
 
                         if page_err_ids:
-                            st.markdown("---")
+                            st.divider() # Garisan pemisah melintang
+                            
                             all_page_ignored = all(
                                 eid in st.session_state.ignored_errors for eid in page_err_ids
                             )
                             st.checkbox(
-                                "🚫 **Abaikan Semua (Bypass Page Ini)**",
+                                "Abaikan Semua Isu Muka Surat Ini (Bypass All)",
                                 key=f"cb_all_p{page_num+1}",
                                 value=all_page_ignored,
                                 on_change=toggle_bypass_page,

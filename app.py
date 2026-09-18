@@ -1424,7 +1424,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 20px;">
                 <div style="background-color: #ffffff; padding: 18px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #2563eb; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
                     <div style="font-weight: 700; color: #1e293b; font-size: 0.95rem; margin-bottom: 6px;">🔍 Semakan Automatik</div>
-                    <p style="margin: 0; color: #64748b; font-size: 0.82rem; line-height: 1.4;">Mengesan margin, saiz fon, tajuk, dan struktur muka surat mengikut piawaian GPPTA 2026.</p>
+                    <p style="margin: 0; color: #64748b; font-size: 0.82rem; line-height: 1.4;">Mengesan margin, saiz fon, jarak baris, dan struktur muka surat mengikut piawaian GPPTA 2026.</p>
                 </div>
                 <div style="background-color: #ffffff; padding: 18px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #d97706; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
                     <div style="font-weight: 700; color: #1e293b; font-size: 0.95rem; margin-bottom: 6px;">⚡ Visual Interaktif</div>

@@ -22,67 +22,720 @@ import threading
 import requests
 from supabase import create_client
 
+# =========================================================
+# TETAPAN VERSI SISTEM (Tukar di sini sahaja!)
+# =========================================================
+APP_VERSION = "1.2.0"  # Set versi Fasa 2 anda di sini
+
+def semak_format_rujukan_apa(doc):
+    errors = []
+    
+    # 📌 SENARAI KATA KUNCI UNTUK LANGKAU (SKIP)
+    # Jika muka surat ada perkataan ini, ia dipastikan BUKAN muka surat Rujukan khas
+    SKIP_PAGE_KEYWORDS = [
+        "ISI KANDUNGAN", "SENARAI KANDUNGAN", 
+        "BAB 1", "BAB 2", "BAB 3", "BAB 4", "BAB 5", 
+        "KESIMPULAN", "CADANGAN"
+    ]
+
+    for page_idx, page in enumerate(doc):
+        text_upper = page.get_text().upper()
+        
+        # 1. LANGKAU MUKA SURAT JIKA TERDAPAT MANA-MANA KATA KUNCI DARI SKIP_PAGE_KEYWORDS
+        if any(kw in text_upper for kw in SKIP_PAGE_KEYWORDS):
+            continue
+
+        # 2. HANYA JALANKAN SEMAKAN JIKA MUKA SURAT MENGANDUNGI TAJUK RUJUKAN / BIBLIOGRAFI
+        if "RUJUKAN" in text_upper or "BIBLIOGRAFI" in text_upper:
+            text_page = page.get_text("dict")
+            is_after_heading = False
+            
+            for block in text_page.get("blocks", []):
+                for line in block.get("lines", []):
+                    x0, y0, x1, y1 = line["bbox"]
+                    line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+                    
+                    if not line_text:
+                        continue
+                        
+                    # Pengesanan TAJUK UTAMA "RUJUKAN" pada muka surat khas tersebut
+                    if line_text.upper() in ["RUJUKAN", "SENARAI RUJUKAN", "BIBLIOGRAFI"]:
+                        is_after_heading = True
+                        continue
+                        
+                    if is_after_heading:
+                        # -----------------------------------------------------
+                        # ISU 1: URL MENTAH (Bare URL)
+                        # -----------------------------------------------------
+                        if line_text.startswith("http://") or line_text.startswith("https://") or line_text.startswith("www."):
+                            errors.append({
+                                "page": page_idx + 1,
+                                "msg": f"Format APA Salah: URL mentah '{line_text[:30]}...' tidak boleh ditulis terus tanpa nama penulis & tahun.",
+                                "bbox": (x0, y0, x1, y1)
+                            })
+                            continue
+
+                        # -----------------------------------------------------
+                        # ISU 2: ENTRI TERLALU PENDEK / TIDAK LENGKAP
+                        # -----------------------------------------------------
+                        words = line_text.split()
+                        if len(words) < 4 and not re.search(r'\d{4}', line_text):
+                            errors.append({
+                                "page": page_idx + 1,
+                                "msg": f"Format Rujukan Tidak Lengkap: '{line_text}' tiada elemen asas APA (Penulis, Tahun, Tajuk).",
+                                "bbox": (x0, y0, x1, y1)
+                            })
+                            continue
+
+                        # -----------------------------------------------------
+                        # ISU 3: SEMAKAN POLA TAHUN APA
+                        # -----------------------------------------------------
+                        has_year_pattern = re.search(r'\((19\vert{}20)\d{2}[a-z]?\)', line_text) or re.search(r'\((n\.d\.\vert{}t\.t\.)\)', line_text, re.IGNORECASE)
+                        
+                        if not has_year_pattern and not line_text.startswith("http") and len(words) >= 4:
+                            if line_text[0].isupper():
+                                errors.append({
+                                    "page": page_idx + 1,
+                                    "msg": f"Format APA Isu: Garisan rujukan tiada format tahun dalam kurungan `(Tahun)`.",
+                                    "bbox": (x0, y0, x1, y1)
+                                })
+
+    return errors
+
+def int_to_roman(number):
+    """Menukar nombor bulat kepada nombor Roman kecil."""
+    if number <= 0:
+        return ""
+    num_map = [(10, 'x'), (9, 'ix'), (5, 'v'), (4, 'iv'), (1, 'i')]
+    roman = ''
+    while number > 0:
+        for val, sign in num_map:
+            if number >= val:
+                roman += sign
+                number -= val
+                break
+    return roman
+
+def semak_penomboran_gppta(doc):
+    errors = []
+    
+    # Kata kunci khas Bahagian Awalan (Front Matter)
+    FRONT_MATTER_KEYWORDS = [
+        "PENGAKUAN PENULIS", "PERAKUAN PENYELIA", "PENGHARGAAN", 
+        "ABSTRAK", "ABSTRACT", "ISI KANDUNGAN", "SENARAI KANDUNGAN",
+        "SENARAI JADUAL", "SENARAI RAJAH", "SENARAI ATUR CARA", 
+        "SENARAI KOD", "SENARAI LAMPIRAN", "SENARAI SINGKATAN", "SENARAI SIMBOL"
+    ]
+
+    def is_front_matter_text(text_upper):
+        return any(kw in text_upper for kw in FRONT_MATTER_KEYWORDS)
+
+    # -----------------------------------------------------------------
+    # FASA 1: IMBASAN AWAL (PRE-PASS) UNTUK PETAKAN ZON DOKUMEN
+    # -----------------------------------------------------------------
+    tajuk_dalam_idx = None
+    first_fm_idx = None
+    bab1_page_idx = None
+
+    for idx, page in enumerate(doc):
+        text_upper = page.get_text().upper()
+        
+        # 1. Cari Halaman Tajuk Dalam (Muka surat 'i' tersembunyi)
+        if "LAPORAN PROJEK YANG DIKEMUKAKAN" in text_upper and tajuk_dalam_idx is None:
+            tajuk_dalam_idx = idx
+
+        # 2. Cari muka surat Front Matter pertama
+        if is_front_matter_text(text_upper) and first_fm_idx is None:
+            first_fm_idx = idx
+
+        # 3. Cari Muka Surat Sebenar BAB 1 (📌 Mengesan sambungan Isi Kandungan: PERKARA & MUKA SURAT)
+        is_toc_page = (
+            "ISI KANDUNGAN" in text_upper 
+            or "SENARAI KANDUNGAN" in text_upper 
+            or ("PERKARA" in text_upper and "MUKA SURAT" in text_upper)
+        )
+        
+        if not is_toc_page:
+            # Semak jika ada tajuk utama BAB 1 secara berasingan
+            lines = [line.strip().upper() for line in page.get_text().splitlines() if line.strip()]
+            has_bab1_heading = any(
+                line in ["BAB 1", "BAB I", "BAB 1: PENGENALAN", "BAB 1 PENGENALAN", "BAB I PENGENALAN"]
+                or (line.startswith("BAB 1") and "PENGENALAN" in line)
+                for line in lines
+            )
+            
+            if has_bab1_heading and bab1_page_idx is None:
+                bab1_page_idx = idx
+
+    # Ketetapan fallback sekiranya penanda tidak dijumpai:
+    if first_fm_idx is not None and tajuk_dalam_idx is None:
+        tajuk_dalam_idx = max(0, first_fm_idx - 1)
+    elif tajuk_dalam_idx is None:
+        tajuk_dalam_idx = 0
+
+    if bab1_page_idx is None:
+        bab1_page_idx = len(doc)
+
+    # -----------------------------------------------------------------
+    # FASA 2: SEMAKAN PENOMBORAN PER-MUKA SURAT
+    # -----------------------------------------------------------------
+    for page_idx, page in enumerate(doc):
+        page_num_display = page_idx + 1
+        page_width = page.rect.width
+        page_height = page.rect.height
+
+        # Ekstrak semua teks di kawasan Footer (Bawah 25% tinggi muka surat)
+        footer_items = []
+        text_page = page.get_text("dict")
+        
+        for block in text_page.get("blocks", []):
+            for line in block.get("lines", []):
+                x0, y0, x1, y1 = line["bbox"]
+                line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+                
+                # Diluaskan ke 25% bawah muka surat (y0 > 75%) supaya 'i' tidak terlepas
+                if y0 > (page_height * 0.75) and line_text:
+                    is_right = x0 > (page_width * 0.65)
+                    is_center = (page_width * 0.30) <= x0 <= (page_width * 0.65)
+                    
+                    footer_items.append({
+                        "text": line_text,
+                        "cleaned": line_text.strip(" -().[]"),
+                        "bbox": (x0, y0, x1, y1),
+                        "is_right": is_right,
+                        "is_center": is_center
+                    })
+
+        # -----------------------------------------------------------------
+        # SEMAKAN KHAS UNTUK MUKA HADAPAN DALAM (TAJUK DALAM)
+        # -----------------------------------------------------------------
+        if page_idx == tajuk_dalam_idx:
+            for item in footer_items:
+                txt = item["cleaned"].lower()
+                
+                # Hanya kesan nombor muka surat 'i' atau '1' (Abaikan tahun seperti '2026')
+                if txt in ["i", "1"]:
+                    msg_text = "Muka Hadapan Dalam (Tajuk Dalam) tidak sepatutnya memaparkan nombor muka surat (nombor 'i' mestilah tersembunyi)."
+                    
+                    if 'errors' in locals():
+                        errors.append({"msg": msg_text, "bbox": item["bbox"], "page": page_num_display})
+                    elif 'page_errors' in locals():
+                        page_errors.append({"msg": msg_text, "bbox": item["bbox"]})
+                    
+                    break  # 📌 Henti selepas jumpa 1 ralat supaya mesej tidak berulang!
+            
+            # Skip semakan standard lokasi bawah-kanan/bawah-tengah untuk muka surat ini
+            continue
+        # -----------------------------------------------------------------
+        # PENILAIAN DOKUMEN MENGIKUT ZON INDEKS
+        # -----------------------------------------------------------------
+        # A. KULIT LUAR / SAMPUL (Sebelum Tajuk Dalam)
+        if page_idx < tajuk_dalam_idx:
+            for item in footer_items:
+                if item["cleaned"].isdigit() or item["cleaned"].lower() in ['i', 'ii', 'iii']:
+                    errors.append({
+                        "page": page_num_display,
+                        "msg": f"Muka surat sampul/hadapan tidak boleh memaparkan nombor muka surat (dikesan '{item['text']}').",
+                        "bbox": item["bbox"]
+                    })
+
+        # B. HALAMAN TAJUK DALAM (Muka surat 'i' Tersembunyi)
+        elif page_idx == tajuk_dalam_idx:
+            for item in footer_items:
+                if item["cleaned"].lower() in ['i', '1']:
+                    errors.append({
+                        "page": page_num_display,
+                        "msg": f"Halaman Tajuk Dalam tidak boleh memaparkan nombor muka surat (dikesan '{item['text']}').",
+                        "bbox": item["bbox"]
+                    })
+
+        # C. BAHAGIAN AWALAN (Roman: ii, iii, iv, ...)
+        elif tajuk_dalam_idx < page_idx < bab1_page_idx:
+            expected_roman_val = (page_idx - tajuk_dalam_idx) + 1
+            expected_roman = int_to_roman(expected_roman_val)
+            
+            # Adakah nombor Roman wujud di PENJURU BAWAH KANAN?
+            found_exact_right = any(
+                item["cleaned"].lower() == expected_roman and item["is_right"] 
+                for item in footer_items
+            )
+            
+            if not found_exact_right:
+                # Semak jika nombor wujud tetapi di BAWAH TENGAH
+                center_item = next((item for item in footer_items if item["cleaned"].lower() == expected_roman and item["is_center"]), None)
+                if center_item:
+                    errors.append({
+                        "page": page_num_display,
+                        "msg": f"Kedudukan Nombor Salah: Nombor '{expected_roman}' berada di bawah tengah. GP PTA 2026 mewajibkan di penjuru bawah kanan.",
+                        "bbox": center_item["bbox"]
+                    })
+                else:
+                    err_bbox = footer_items[0]["bbox"] if footer_items else None
+                    errors.append({
+                        "page": page_num_display,
+                        "msg": f"Nombor muka surat bahagian awalan sepatutnya '{expected_roman}' (Roman kecil) di penjuru bawah kanan.",
+                        "bbox": err_bbox
+                    })
+
+        # D. BAHAGIAN UTAMA & RUJUKAN/LAMPIRAN (Arab: 1, 2, 3, ...)
+        elif page_idx >= bab1_page_idx:
+            expected_arabic_val = (page_idx - bab1_page_idx) + 1
+            expected_arabic_str = str(expected_arabic_val)
+            
+            # 1. Adakah nombor yang betul ada di PENJURU BAWAH KANAN?
+            found_exact_right = any(
+                item["cleaned"] == expected_arabic_str and item["is_right"] 
+                for item in footer_items
+            )
+            
+            if not found_exact_right:
+                # 2. Adakah nombor yang betul '1' berada di BAWAH TENGAH?
+                center_item = next((item for item in footer_items if item["cleaned"] == expected_arabic_str and item["is_center"]), None)
+                
+                if center_item:
+                    # 📌 Nombor '1' BETUL, cuma kedudukan KETENGAH
+                    errors.append({
+                        "page": page_num_display,
+                        "msg": f"Kedudukan Nombor Salah: Nombor '{expected_arabic_str}' berada di bawah tengah. GP PTA 2026 mewajibkan di penjuru bawah kanan.",
+                        "bbox": center_item["bbox"]
+                    })
+                else:
+                    # Nombor memang salah/lompat atau tiada nombor terus
+                    err_bbox = footer_items[0]["bbox"] if footer_items else None
+                    errors.append({
+                        "page": page_num_display,
+                        "msg": f"Nombor muka surat bahagian utama sepatutnya '{expected_arabic_str}' di penjuru bawah kanan.",
+                        "bbox": err_bbox
+                    })
+
+    return errors
+
+# =========================================================
+# FUNGSI POPUP LOG KEMASKINI (CHANGELOG DIALOG)
+# =========================================================
+@st.dialog(f"📜 Log Kemaskini (v{APP_VERSION})")
+def paparkan_log_kemaskini():
+    st.markdown(f"### v{APP_VERSION}")
+    st.markdown(
+        """
+    * **Semakan Justify Perenggan:** Pengesan otomatik bagi perenggan yang tidak diselaraskan (*justified*).
+    * **Toleransi Margin Dinamik:** Pelarasan ambang toleransi margin bagi mengelakkan ralat palsu pada teks dan jadual.
+    * **Peningkatan UI:** Pengemaskinian reka bentuk sidebar dan kad profil pengguna yang lebih kemas.
+    """
+    )
+
+def semak_justify_perenggan(
+    page, margin_left_pt, margin_right_pt, tolerance=3.0
+):
+    """Memeriksa sama ada perenggan teks dalam muka surat di-justify atau tidak.
+
+    Pulangkan senarai koordinat bbox bagi baris yang tidak di-justify.
+    """
+    page_width = page.rect.width
+    expected_right_x = page_width - margin_right_pt
+    expected_left_x = margin_left_pt
+
+    ralat_justify_lines = []
+
+    # Dapatkan struktur teks dalam bentuk dictionary
+    text_page = page.get_text("dict")
+
+    for block in text_page["blocks"]:
+        # Hanya proses blok teks (type 0), abaikan gambar/jadual
+        if block.get("type") == 0:
+            lines = block.get("lines", [])
+
+            # Perenggan yang ada lebih daripada 1 baris sahaja disemak
+            if len(lines) > 1:
+                # Abaikan baris terakhir perenggan (kerana baris akhir memang pendek)
+                baris_untuk_disemak = lines[:-1]
+
+                for line in baris_untuk_disemak:
+                    x0, y0, x1, y1 = line["bbox"]
+
+                    # Semak adakah margin kiri & kanan menepati garisan justify
+                    left_ok = abs(x0 - expected_left_x) <= tolerance
+                    right_ok = abs(x1 - expected_right_x) <= tolerance
+
+                    # Jika gagal mana-mana margin pada baris pertengahan -> Ralat Justify
+                    if not (left_ok and right_ok):
+                        ralat_justify_lines.append(
+                            {
+                                "bbox": (x0, y0, x1, y1),
+                                "text": "".join(
+                                    [
+                                        span["text"]
+                                        for span in line.get("spans", [])
+                                    ]
+                                ),
+                            }
+                        )
+
+    return ralat_justify_lines
+
+# --- CONTOH PENGGUNAAN ---
+# doc = fitz.open("laporan_pta_sample.pdf")
+# page = doc[0]
+# # Contoh Margin PTA: Kiri = 3.75cm (~106.3pt), Kanan = 2.5cm (~70.8pt)
+# ralat = semak_justify_perenggan(page, margin_left_pt=106.3, margin_right_pt=70.8)
+
+# print(f"Jumlah baris tidak justify: {len(ralat)}")
+# for item in ralat:
+#     print(f"Baris Bermasalah: {item['text']}")
+
 PT_TO_MM = 2.83465
 
 def is_page_number(text):
     txt = text.strip().lower()
     return txt.isdigit() or bool(re.match(r'^(?=[i|v|x|l|c|d|m]+$)[i|v|x|l|c|d|m]+$', txt))
 
-def format_margin_msg(jenis_elemen, teks_sampel, pos_pt, target_mm, jenis_margin="Kiri"):
-    pos_mm = round(pos_pt / PT_TO_MM, 1)
-    terkeluar_mm = round(abs((target_mm * PT_TO_MM) - pos_pt) / PT_TO_MM, 1)
+def format_margin_msg(jenis_elemen, teks_sampel, dist_from_edge_mm, target_mm=25, jenis_margin="Kiri"):
+    """
+    dist_from_edge_mm: 
+      - Margin Kiri: Jarak x0 dari tepi kiri (mm)
+      - Margin Kanan: Jarak x1 dari tepi kanan kertas (mm)
+    """
+    # Berapa mm teks tersebut melepasi/terkeluar dari garisan margin minimum (cth: 25mm)
+    terkeluar_mm = round(target_mm - dist_from_edge_mm, 1)
+    pos_mm = round(dist_from_edge_mm, 1)
+    
     teks_clean = f"'{teks_sampel[:15]}...'" if teks_sampel else ""
-    return f"Luar Margin {jenis_margin}: {jenis_elemen} {teks_clean} (Kawasan: {pos_mm}mm | Terkeluar {terkeluar_mm}mm dari {target_mm}mm)"
+    
+    # Jika terkeluar_mm <= 0, bermakna teks berada dalam kawasan selamat (tiada ralat)
+    return (
+        f"Luar Margin {jenis_margin}: {jenis_elemen} {teks_clean} "
+        f"(Jarak tepi: {pos_mm}mm | Terkeluar {terkeluar_mm}mm dari {target_mm}mm)"
+    )
 
-TOLERANCE_MM = 1.5  # Laraskan ke 2.0 jika masih terlalu sensitif
+PT_TO_MM = 25.4 / 72.0  # Faktor penukaran point ke milimeter
+TOLERANCE_MM = 1.5      # Toleransi margin (laraskan ke 2.0 jika sensitif)
 
 def check_margin_kiri_violations(page, target_margin_mm=40, tolerance_mm=1.5):
-    errors = []
-    limit_pt = (target_margin_mm - tolerance_mm) * PT_TO_MM
+    raw_text_errors = []
+    raw_drawing_errors = []
+    raw_image_errors = []  # 📌 Tambah untuk simpan ralat imej
+    
+    # Tukar margin sasaran (ditolak toleransi) ke bentuk point (pt)
+    limit_pt = (target_margin_mm - tolerance_mm) / PT_TO_MM
     text_page = page.get_text("dict")
 
-    # 1. Semak Teks
+    # -----------------------------------------------------------------
+    # 1. KUMPUL SEMUA TEKS YANG TERKELUAR MARGIN KIRI
+    # -----------------------------------------------------------------
     for block in text_page.get("blocks", []):
         for line in block.get("lines", []):
             x0, y0, x1, y1 = line["bbox"]
             line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
+            
             if x0 < limit_pt and line_text:
                 if not is_page_number(line_text):
-                    msg = format_margin_msg("Teks", line_text, x0, target_margin_mm, "Kiri")
-                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+                    x0_mm = x0 * PT_TO_MM
+                    diff_mm = target_margin_mm - x0_mm
+                    raw_text_errors.append({
+                        "bbox": (x0, y0, x1, y1),
+                        "diff_mm": diff_mm
+                    })
 
-    # 2. Semak Titik/Garisan Vektor (Dot Leaders / Line Shapes)
+    # -----------------------------------------------------------------
+    # 2. KUMPUL SEMUA GARISAN / TITIK VEKTOR YANG TERKELUAR
+    # -----------------------------------------------------------------
     for draw in page.get_drawings():
         rect = draw["rect"]
-        # Mengabaikan garisan tepi bingkai kertas (> 80% tinggi muka surat)
         if 5 < rect.x0 < limit_pt and (rect.y1 - rect.y0) <= (page.rect.height * 0.8):
             bbox_tuple = (rect.x0, rect.y0, rect.x1, rect.y1)
-            if not any(e["bbox"] == bbox_tuple for e in errors):
-                msg = format_margin_msg("Elemen Garis/Titik '.......'", "", rect.x0, target_margin_mm, "Kiri")
-                errors.append({"bbox": bbox_tuple, "msg": msg})
+            if not any(e["bbox"] == bbox_tuple for e in raw_drawing_errors):
+                x0_mm = rect.x0 * PT_TO_MM
+                diff_mm = target_margin_mm - x0_mm
+                raw_drawing_errors.append({
+                    "bbox": bbox_tuple,
+                    "diff_mm": diff_mm
+                })
+
+    # -----------------------------------------------------------------
+    # 3. KUMPUL SEMUA IMEJ / GAMBAR YANG TERKELUAR MARGIN KIRI (BARU)
+    # -----------------------------------------------------------------
+    images_info = page.get_image_info()
+    for img in images_info:
+        img_x0 = img["bbox"][0]
+        if img_x0 < limit_pt:
+            x0_mm = img_x0 * PT_TO_MM
+            diff_mm = target_margin_mm - x0_mm
+            raw_image_errors.append({
+                "bbox": img["bbox"],
+                "diff_mm": diff_mm
+            })
+
+    errors = []
+
+    # -----------------------------------------------------------------
+    # 4. RUMUSKAN TEKS KEPADA 1 ISU & 1 KOTAK BESAR (COMBINED BBOX)
+    # -----------------------------------------------------------------
+    if raw_text_errors:
+        all_bboxes = [e["bbox"] for e in raw_text_errors]
+        diffs = [e["diff_mm"] for e in raw_text_errors]
+        min_diff = min(diffs)
+        max_diff = max(diffs)
+        count = len(raw_text_errors)
+
+        combined_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+
+        if count == 1 or abs(max_diff - min_diff) < 0.1:
+            msg = f"Luar Margin Kiri (Teks): Terkeluar {min_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+        else:
+            msg = f"Luar Margin Kiri (Teks: {count} baris): Terkeluar {min_diff:.1f}mm - {max_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+
+        errors.append({
+            "msg": msg,
+            "bbox": combined_bbox
+        })
+
+    # -----------------------------------------------------------------
+    # 5. RUMUSKAN / KAMPOI GARISAN KEPADA 1 ISU SAHAJA
+    # -----------------------------------------------------------------
+    if raw_drawing_errors:
+        all_bboxes = [e["bbox"] for e in raw_drawing_errors]
+        diffs = [e["diff_mm"] for e in raw_drawing_errors]
+        min_diff = min(diffs)
+        max_diff = max(diffs)
+        count = len(raw_drawing_errors)
+
+        combined_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+
+        if count == 1 or abs(max_diff - min_diff) < 0.1:
+            msg = f"Luar Margin Kiri (Garisan/Carta): Terkeluar {min_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+        else:
+            msg = f"Luar Margin Kiri (Garisan/Carta: {count} objek): Terkeluar {min_diff:.1f}mm - {max_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+
+        errors.append({
+            "msg": msg,
+            "bbox": combined_bbox
+        })
+
+    # -----------------------------------------------------------------
+    # 6. RUMUSKAN / KAMPOI IMEJ KEPADA 1 ISU SAHAJA (BARU)
+    # -----------------------------------------------------------------
+    if raw_image_errors:
+        all_bboxes = [e["bbox"] for e in raw_image_errors]
+        diffs = [e["diff_mm"] for e in raw_image_errors]
+        min_diff = min(diffs)
+        max_diff = max(diffs)
+        count = len(raw_image_errors)
+
+        combined_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+
+        if count == 1 or abs(max_diff - min_diff) < 0.1:
+            msg = f"Luar Margin Kiri (Imej/Gambar): Terkeluar {min_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+        else:
+            msg = f"Luar Margin Kiri (Imej/Gambar: {count} objek): Terkeluar {min_diff:.1f}mm - {max_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+
+        errors.append({
+            "msg": msg,
+            "bbox": combined_bbox
+        })
 
     return errors
 
+def check_margin_kanan_violations(page, target_margin_mm=25, tolerance_mm=2.5):
+    raw_text_errors = []
+    raw_drawing_errors = []
+    
+    PT_TO_MM = 25.4 / 72.0
+    page_width_pt = page.rect.width
+    page_height_pt = page.rect.height
+    page_width_mm = page_width_pt * PT_TO_MM  # Lebar A4 (~210mm)
+    
+    # Had limit jarak minimum dari tepi kanan (cth: 25mm - 2.5mm = 22.5mm)
+    limit_mm = target_margin_mm - tolerance_mm
+    limit_x1_pt = page_width_pt - (limit_mm / PT_TO_MM)
 
-def check_margin_kanan_violations(page, target_margin_mm=25, tolerance_mm=TOLERANCE_MM):
+    # -----------------------------------------------------------------
+    # 1. SEMAK TEKS TERKELUAR MARGIN KANAN
+    # -----------------------------------------------------------------
+    words = page.get_text("words")
+    if words:
+        lines_dict = {}
+        for w in words:
+            key = (w[5], w[6])  # (block_no, line_no)
+            if key not in lines_dict:
+                lines_dict[key] = []
+            lines_dict[key].append(w)
+            
+        for key, line_words in lines_dict.items():
+            line_x0 = min(w[0] for w in line_words)
+            line_y0 = min(w[1] for w in line_words)
+            line_x1 = max(w[2] for w in line_words)
+            line_y1 = max(w[3] for w in line_words)
+            full_text = " ".join([w[4] for w in line_words]).strip()
+            
+            if not full_text:
+                continue
+
+            x1_mm = line_x1 * PT_TO_MM
+            dist_right_mm = page_width_mm - x1_mm
+
+            if dist_right_mm < limit_mm:
+                if not is_page_number(full_text):
+                    diff_mm = target_margin_mm - dist_right_mm
+                    raw_text_errors.append({
+                        "bbox": (line_x0, line_y0, line_x1, line_y1),
+                        "diff_mm": diff_mm
+                    })
+
+    # -----------------------------------------------------------------
+    # 2. SEMAK KOTAK / GARISAN CARTA ALIR (VEKTOR) TERKELUAR MARGIN KANAN
+    # -----------------------------------------------------------------
+    for draw in page.get_drawings():
+        rect = draw["rect"]
+        
+        # Abaikan garisan bingkai penuh muka surat
+        if (rect.y1 - rect.y0) > (page_height_pt * 0.95):
+            continue
+            
+        # Semak jika x1 (hujung kanan bentuk) melepasi had margin kanan
+        if rect.x1 > limit_x1_pt:
+            x1_mm = rect.x1 * PT_TO_MM
+            dist_right_mm = page_width_mm - x1_mm
+            
+            bbox_tuple = (rect.x0, rect.y0, rect.x1, rect.y1)
+            if not any(e["bbox"] == bbox_tuple for e in raw_drawing_errors):
+                diff_mm = target_margin_mm - dist_right_mm
+                raw_drawing_errors.append({
+                    "bbox": bbox_tuple,
+                    "diff_mm": diff_mm
+                })
+
     errors = []
-    limit_pt = (target_margin_mm - tolerance_mm) * PT_TO_MM
-    page_width = page.rect.width
+
+    # -----------------------------------------------------------------
+    # 3. RUMUSKAN TEKS KEPADA 1 ISU & COMBINED BBOX
+    # -----------------------------------------------------------------
+    if raw_text_errors:
+        all_bboxes = [e["bbox"] for e in raw_text_errors]
+        diffs = [e["diff_mm"] for e in raw_text_errors]
+        min_diff, max_diff = min(diffs), max(diffs)
+        count = len(raw_text_errors)
+
+        combined_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+
+        if count == 1 or abs(max_diff - min_diff) < 0.1:
+            msg = f"Luar Margin Kanan (Teks): Terkeluar {min_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+        else:
+            msg = f"Luar Margin Kanan (Teks: {count} baris): Terkeluar {min_diff:.1f}mm - {max_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+
+        errors.append({"msg": msg, "bbox": combined_bbox})
+
+    # -----------------------------------------------------------------
+    # 4. RUMUSKAN KOTAK/GARISAN CARTA ALIR KEPADA 1 ISU & COMBINED BBOX
+    # -----------------------------------------------------------------
+    if raw_drawing_errors:
+        all_bboxes = [e["bbox"] for e in raw_drawing_errors]
+        diffs = [e["diff_mm"] for e in raw_drawing_errors]
+        min_diff, max_diff = min(diffs), max(diffs)
+        count = len(raw_drawing_errors)
+
+        combined_draw_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+
+        if count == 1 or abs(max_diff - min_diff) < 0.1:
+            msg = f"Luar Margin Kanan (Garisan/Carta Alir): Terkeluar {min_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+        else:
+            msg = f"Luar Margin Kanan (Garisan/Carta Alir: {count} objek): Terkeluar {min_diff:.1f}mm - {max_diff:.1f}mm dari sasaran {target_margin_mm}mm."
+
+        errors.append({
+            "msg": msg,
+            "bboxes": all_bboxes,
+            "bbox": combined_draw_bbox
+        })
+
+    return errors
+
+# 📌 TAMPAL DI BAWAH return errors KOD MARGIN KANAN ANDA:
+
+def check_font_violations(page, allowed_fonts=["arial"], min_font_size=8.0):
+    raw_font_name_errors = []
+    raw_font_size_errors = []
     text_page = page.get_text("dict")
 
     for block in text_page.get("blocks", []):
+        if block.get("type", 0) != 0:
+            continue
         for line in block.get("lines", []):
-            x0, y0, x1, y1 = line["bbox"]
-            line_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
-            dist_from_edge_pt = page_width - x1
+            for span in line.get("spans", []):
+                text = span.get("text", "").strip()
+                if not text:
+                    continue
 
-            # Hanya kembalikan ralat jika terkeluar MELEBIHI tolerance (1.5mm)
-            if dist_from_edge_pt < limit_pt and line_text:
-                if not is_page_number(line_text):
-                    msg = format_margin_msg("Teks", line_text, dist_from_edge_pt, target_margin_mm, "Kanan")
-                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+                font_name = span.get("font", "")
+                font_size = span.get("size", 0.0)
+                bbox = span.get("bbox")
+
+                font_clean = font_name.lower().replace(" ", "")
+                is_valid_font = any(f.lower() in font_clean for f in allowed_fonts)
+
+                if not is_valid_font:
+                    raw_font_name_errors.append({"font_name": font_name, "bbox": bbox, "text": text})
+
+                if font_size < min_font_size:
+                    raw_font_size_errors.append({"font_size": font_size, "bbox": bbox, "text": text})
+
+    errors = []
+
+    if raw_font_name_errors:
+        all_bboxes = [e["bbox"] for e in raw_font_name_errors]
+        unique_fonts = list(set(e["font_name"] for e in raw_font_name_errors))
+        fonts_str = ", ".join(unique_fonts[:2])
+        count = len(raw_font_name_errors)
+
+        combined_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+        msg = f"Jenis font tidak sah ({fonts_str}: {count} lokasi dikesan). Digalakkan guna Arial."
+        errors.append({"msg": msg, "bbox": combined_bbox})
+
+    if raw_font_size_errors:
+        all_bboxes = [e["bbox"] for e in raw_font_size_errors]
+        sizes = [e["font_size"] for e in raw_font_size_errors]
+        min_s, max_s = min(sizes), max(sizes)
+        count = len(raw_font_size_errors)
+
+        combined_bbox = (
+            min(b[0] for b in all_bboxes),
+            min(b[1] for b in all_bboxes),
+            max(b[2] for b in all_bboxes),
+            max(b[3] for b in all_bboxes)
+        )
+        size_str = f"{min_s:.1f}pt" if abs(min_s - max_s) < 0.1 else f"{min_s:.1f}pt - {max_s:.1f}pt"
+        msg = f"Saiz font terlalu kecil ({count} lokasi dikesan: {size_str}). Minimum {min_font_size:.0f}pt."
+        errors.append({"msg": msg, "bbox": combined_bbox})
+
     return errors
-
 
 def check_margin_atas_violations(page, target_margin_mm=25, tolerance_mm=TOLERANCE_MM):
     errors = []
@@ -596,11 +1249,14 @@ if st.session_state["user"] is None:
                         except Exception as e:
                             st.error(f"❌ Gagal mendaftar akaun: {str(e)}")
 
-        st.markdown("""
+        st.markdown(
+            f"""
             <div style="text-align: center; margin-top: 24px; color: #64748b; font-size: 0.8rem;">
-                Hak Cipta © 2026 KV Nibong Tebal • Versi 1.1.2
+                Hak Cipta © 2026 KV Nibong Tebal • Versi {APP_VERSION}
             </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     st.stop()
 
@@ -844,27 +1500,55 @@ abaikan_pagenum_appendix = True
 
 with st.sidebar:
     # =========================================================
-    # PAUTAN PUSAT BANTUAN DI SIDEBAR
+    # 1. PAPARAN VERSI SISTEM & BUTANG LOG KEMASKINI
     # =========================================================
-    with st.sidebar:
-        st.markdown("### 📖 Pusat Bantuan & Panduan")
+    col_ver, col_log = st.columns([3, 1])
 
-        # Link Video Tutorial & Manual Pengguna (Google Drive)
-        url_video_tutorial = "https://drive.google.com/file/d/1IdIwZEQ4xNZ_-iSwcrC6XZSCxQPmgn8R/view?usp=sharing"
-        url_pdf_manual = "https://drive.google.com/file/d/17Wt0OdsUj9UILwZbqw6_ghIT0Wg-H9-r/view?usp=sharing"
-
-        # Butang Pautan Pantas
-        st.link_button(
-            "📹 Tonton Video Tutorial (3 Min)",
-            url_video_tutorial,
-            width="stretch",
+    with col_ver:
+        st.markdown(
+            f"""
+            <div style="
+                background: #1e293b; 
+                padding: 6px 10px; 
+                border-radius: 8px; 
+                border: 1px solid #334155; 
+                color: #38bdf8; 
+                font-size: 0.82rem; 
+                font-weight: 700; 
+                height: 38px;
+                display: flex;
+                align-items: center;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            ">
+                📌 Versi: <span style="color: #4ade80; margin-left: 4px;">v{APP_VERSION}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        st.link_button(
-            "📄 Muat Turun Manual Pengguna (PDF)",
-            url_pdf_manual,
-            width="stretch",
-        )
+    with col_log:
+        if st.button("ℹ️", help="Lihat Log Kemaskini", use_container_width=True):
+            paparkan_log_kemaskini()
+
+    # =========================================================
+    # 2. PAUTAN PUSAT BANTUAN DI SIDEBAR
+    # =========================================================
+    st.markdown("### 📖 Pusat Bantuan & Panduan")
+
+    url_video_tutorial = "https://drive.google.com/file/d/1IdIwZEQ4xNZ_-iSwcrC6XZSCxQPmgn8R/view?usp=sharing"
+    url_pdf_manual = "https://drive.google.com/file/d/17Wt0OdsUj9UILwZbqw6_ghIT0Wg-H9-r/view?usp=sharing"
+
+    st.link_button(
+        "📹 Tonton Video Tutorial (3 Min)",
+        url_video_tutorial,
+        width="stretch",
+    )
+
+    st.link_button(
+        "📄 Muat Turun Manual Pengguna (PDF)",
+        url_pdf_manual,
+        width="stretch",
+    )
 
     # Format tarikh tamat lesen ke format DD/MM/YYYY
     tarikh_tamat_raw = current_user.get("tarikh_tamat_lesen")
@@ -891,7 +1575,7 @@ with st.sidebar:
         f"""
         <div style="background-color: #1e293b; padding: 14px 16px; border-radius: 12px; border: 1px solid #334155; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
             <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 700; letter-spacing: 0.5px;">AKAUN PENGGUNA</div>
-            <div style="font-size: 0.95rem; color: #38bdf8; font-weight: 700; margin-top: 4px; display: flex; align-items: center;">
+            <div style="font-size: 0.95rem; color: #38bdf8; font-weight: 700; margin-top: 6px; display: flex; align-items: center;">
                 👤 {current_user['username']} <span style="font-size: 0.7rem; background-color: #0284c7; color: white; padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: 600;">{label_peranan(user_role)}</span>
             </div>
             <div style="font-size: 0.82rem; color: #4ade80; font-weight: 600; margin-top: 8px;">
@@ -1858,6 +2542,32 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             # Panggil semakan 1.5 spacing
             page_errors.extend(check_line_spacing(page))
 
+            page_errors.extend(check_font_violations(page, allowed_fonts=["arial"], min_font_size=8.0))
+
+            # =========================================================
+            # 📌 TAMBAH SEMAKAN JUSTIFY DI SINI (FASA 2)
+            # =========================================================
+            # Tentukan margin kiri/kanan dalam unit 'pt' berdasarkan orientasi
+            m_kiri_pt = (
+                25 * 2.83465 if is_landscape else 40 * 2.83465
+            )  # 1mm = 2.83465 pt
+            m_kanan_pt = 25 * 2.83465
+
+            # Panggil fungsi semakan justify
+            ralat_justify = semak_justify_perenggan(
+                page, margin_left_pt=m_kiri_pt, margin_right_pt=m_kanan_pt
+            )
+
+            # Masukkan ralat justify ke dalam senarai page_errors
+            for item in ralat_justify:
+                page_errors.append(
+                    {
+                        "msg": f"Penjajaran teks tidak 'Justified': '{item['text'][:35]}...'",
+                        "bbox": item["bbox"],
+                    }
+                )
+            # =========================================================
+
             has_list_header = any(
                 k in page_text_lower
                 for k in [
@@ -1966,10 +2676,25 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                                         right_min = w_rect * 0.55
                                         if sx0 < right_min:
                                             loc_name = "bawah tengah" if sx0 >= (w_rect * 0.33) else "bawah kiri"
-                                            page_errors.append({
-                                                "msg": f"Nombor muka surat '{text_str}' berada di kedudukan tidak sah ({loc_name}). GP PTA 2026 mewajibkan di bahagian bawah penjuru sebelah kanan.",
-                                                "bbox": (sx0, sy0, sx1, sy1)
-                                            })
+                                            # page_errors.append({
+                                            #    "msg": f"Nombor muka surat '{text_str}' berada di kedudukan tidak sah ({loc_name}). GP PTA 2026 mewajibkan di bahagian bawah penjuru sebelah kanan.",
+                                            #    "bbox": (sx0, sy0, sx1, sy1)
+                                            #})
+
+            # =========================================================================
+            # SEMAKAN MUKA SURAT KOSONG (BLANK PAGE)
+            # =========================================================================
+            full_page_text_clean = page.get_text().strip()
+            page_images = page.get_images()  # Dapatkan senarai gambar pada muka surat
+
+            # Jika tiada teks DAN tiada gambar dikesan
+            if not full_page_text_clean and len(page_images) == 0:
+                page_errors.append(
+                    {
+                        "msg": "Muka surat kosong (blank page) dikesan. Sila padam muka surat ini daripada fail PDF.",
+                        "bbox": None,
+                    }
+                )
 
             # PASS 2: SEMAKAN MARGIN & TEKS
             # =========================================================================
@@ -1994,9 +2719,49 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                         msg = format_margin_msg("Imej/Gambar", "", iy1, target_bottom_mm, "Bawah")
                         page_errors.append({"msg": msg, "bbox": (ix0, iy0, ix1, iy1)})
 
+            # Kriteria Halaman Sampul/Tajuk: Muka Surat 1 ATAU mengandungi kata kunci 'DIPLOMA' & 'KOLEJ VOKASIONAL'
             # =========================================================================
-            # 2. SEMAKAN TEKS & MARGIN TEKS (KOD SEDIA ADA ANDA)
+            # 2. SEMAKAN TEKS & MARGIN TEKS
             # =========================================================================
+
+            # Dapatkan teks penuh muka surat dalam huruf besar untuk pengecaman kata kunci
+            page_text_upper = page.get_text().upper()
+
+            # =========================================================================
+            # 📍 BAHAGIAN 1: PENGECAMAN JENIS MUKA SURAT KHUSUS (GPPTA KV)
+            # =========================================================================
+
+            page_text_upper = page.get_text().upper()
+
+            # 1. Halaman Tajuk Dalam (Lampiran 4)
+            is_inner_cover = (
+                "LAPORAN PROJEK YANG DIKEMUKAKAN" in page_text_upper 
+                or "BAGI MEMENUHI SEBAHAGIAN" in page_text_upper
+            )
+
+            # 2. Halaman Borang / Awalan (Perakuan, Pengakuan, Penghargaan, Abstrak, dll)
+            is_borang_awalan = any(k in page_text_upper for k in [
+                "PENGAKUAN PENULIS",
+                "PERAKUAN PENYELIA",
+                "PERAKUAN PEGAWAI",
+                "DENGAN INI SAYA AKUI",
+                "MEMPERAKUI BAHAWA",
+                "PENGHARGAAN",
+                "ABSTRAK",
+                "ABSTRACT",
+                "SENARAI KANDUNGAN",
+                "SENARAI JADUAL",
+                "SENARAI RAJAH"
+            ])
+
+            # 3. Kulit Muka Hadapan / Hardcover (Lampiran 2)
+            # Mesti BUKAN Halaman Tajuk Dalam dan BUKAN Halaman Borang Awalan
+            is_outer_cover = (
+                (page_num == 0 or ("DIPLOMA" in page_text_upper and "KOLEJ VOKASIONAL" in page_text_upper))
+                and not is_inner_cover
+                and not is_borang_awalan
+            )
+
             for b in blocks:
                 if "lines" in b:
                     for line in b["lines"]:
@@ -2050,35 +2815,73 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                                         (img_bbox[1] <= text_center_y <= img_bbox[3]):
                                             is_inside_image = True
                                             break
+                                
+                                    # ✅ BAHAGIAN 2: SEMAKAN SAIZ FONT KHUSUS GPPTA
+                                    if len(text.strip()) > 1:
+                                        
+                                        # ---------------------------------------------------------------------
+                                        # 1. KULIT MUKA HADAPAN / HARDCOVER (LAMPIRAN 2) - SEMUA 18pt
+                                        # ---------------------------------------------------------------------
+                                        if is_outer_cover:
+                                            if not (16.5 <= size <= 18.5):
+                                                page_errors.append({
+                                                    "msg": f"Kulit Hadapan: Teks mestilah saiz 18pt (dikesan {size}pt): '{text[:25]}...'",
+                                                    "bbox": bbox
+                                                })
 
-                                if not is_math_font and not is_inside_image:
-                                    font_matched = any(
-                                        f.lower().replace(" ", "") in font_name_clean for f in allowed_fonts
-                                    )
-                                    if not font_matched and len(text) > 3:
-                                        page_errors.append(
-                                            {
-                                                "msg": f"Jenis font tidak sah ({font_name}): '{text[:25]}...'",
-                                                "bbox": bbox,
-                                            }
-                                        )
+                                        # ---------------------------------------------------------------------
+                                        # 2. MUKA HADAPAN DALAM (LAMPIRAN 4) - PELBAGAI SAIZ FONT
+                                        # ---------------------------------------------------------------------
+                                        elif is_inner_cover:
+                                            text_clean = text.strip()
+                                            text_upper = text_clean.upper()
 
-                                    # Piawai Saiz Font GPPTA KV 2026
-                                    if len(text) > 5:
-                                        if size < 8.5:
-                                            page_errors.append(
-                                                {
-                                                    "msg": f"Saiz font terlalu kecil ({size}pt): '{text[:25]}...'",
-                                                    "bbox": bbox,
-                                                }
-                                            )
-                                        elif 14.5 < size < 20.0:
-                                            page_errors.append(
-                                                {
-                                                    "msg": f"Saiz font melebihi had tajuk PTA ({size}pt): '{text[:25]}...'",
-                                                    "bbox": bbox,
-                                                }
-                                            )
+                                            # A. Perkataan "Oleh" -> Wajib Saiz 16pt (15.0 - 16.5pt)
+                                            if text_clean.lower() == "oleh":
+                                                if not (15.0 <= size <= 16.5):
+                                                    page_errors.append({
+                                                        "msg": f"Muka Hadapan Dalam: 'Oleh' mestilah saiz 16pt (dikesan {size}pt)",
+                                                        "bbox": bbox
+                                                    })
+
+                                            # B. Program & Tahun (Contoh: "PROGRAM TEKNOLOGI..." / "2024") -> Wajib Saiz 14pt (13.5 - 14.8pt)
+                                            elif "PROGRAM" in text_upper or (text_clean.isdigit() and len(text_clean) == 4):
+                                                if not (13.5 <= size <= 14.8):
+                                                    page_errors.append({
+                                                        "msg": f"Muka Hadapan Dalam: Program/Tahun mestilah saiz 14pt (dikesan {size}pt): '{text[:25]}...'",
+                                                        "bbox": bbox
+                                                    })
+
+                                            # C. Ayat Pengesahan (13pt) -> Merangkumi semua baris pecahan ayat pengesahan
+                                            elif any(k in text_upper for k in ["LAPORAN PROJEK", "DIKEMUKAKAN", "MEMENUHI", "SEBAHAGIAN", "KEPERLUAN"]):
+                                                if not (12.0 <= size <= 13.5):
+                                                    page_errors.append({
+                                                        "msg": f"Muka Hadapan Dalam: Ayat pengesahan mestilah saiz 13pt (dikesan {size}pt): '{text[:25]}...'",
+                                                        "bbox": bbox
+                                                    })
+
+                                            # D. Tajuk Projek & Nama Pelajar -> Wajib Saiz 18pt (16.5 - 18.5pt)
+                                            else:
+                                                if len(text_clean) > 3 and not (16.5 <= size <= 18.5):
+                                                    page_errors.append({
+                                                        "msg": f"Muka Hadapan Dalam: Tajuk/Nama Penulis mestilah saiz 18pt (dikesan {size}pt): '{text[:25]}...'",
+                                                        "bbox": bbox
+                                                    })
+
+                                        # ---------------------------------------------------------------------
+                                        # 3. MUKA SURAT KANDUNGAN BIASA (8.5pt - 14.0pt)
+                                        # ---------------------------------------------------------------------
+                                        else:
+                                            if size < 8.5:
+                                                page_errors.append({
+                                                    "msg": f"Saiz font terlalu kecil ({size}pt, min 8.5pt): '{text[:25]}...'",
+                                                    "bbox": bbox
+                                                })
+                                            elif size > 14.5:
+                                                page_errors.append({
+                                                    "msg": f"Saiz font ({size}pt) melebihi had tajuk kandungan (max 14.0pt): '{text[:25]}...'",
+                                                    "bbox": bbox
+                                                })
 
                             # Semakan Tajuk Jadual / Rajah
                             if semak_caption and not is_list_page:
@@ -2179,23 +2982,66 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                     detected_issues.append({"page": page_num + 1, "msg": err["msg"]})
 
         # =========================================================================
-        # 🔍 PRATONTON VISUAL PER MUKA SURAT
+        # 📌 GABUNGKAN SEMAKAN PENOMBORAN DOKUMEN KE DALAM all_pages_errors_list
+        # =========================================================================
+        # Panggil fungsi semakan penomboran GPPTA
+        numbering_errors = semak_penomboran_gppta(doc)
+
+        # Masukkan ralat penomboran mengikut index muka surat (0-based)
+        for err in numbering_errors:
+            page_idx = err["page"] - 1  # Tukar nombor muka surat (1-based) ke index (0-based)
+            if 0 <= page_idx < len(doc):
+                all_pages_errors_list[page_idx].append({
+                    "msg": err["msg"],
+                    "bbox": err.get("bbox")  # Kotak merah akan dilukis automatik jika bbox wujud
+                })
+
+        # =========================================================================
+        # 📌 2. GABUNGKAN SEMAKAN FORMAT RUJUKAN APA
+        # =========================================================================
+        rujukan_errors = semak_format_rujukan_apa(doc)
+
+        for err in rujukan_errors:
+            page_idx = err["page"] - 1
+            if 0 <= page_idx < len(doc):
+                all_pages_errors_list[page_idx].append({
+                    "msg": err["msg"],
+                    "bbox": err.get("bbox")  # Kotak merah dilukis terus pada baris rujukan bermasalah
+                })
+
+        # =========================================================================
+        # 🔍 PRATONTON VISUAL PER MUKA SURAT (KOD ASAL ANDA Kekal Tanpa Perubahan)
         # =========================================================================
         st.markdown("---")
+        
+        # Recalculate / Kemaskini jumlah keseluruhan detected_issues jika perlu
+        detected_issues = [err for p_errs in all_pages_errors_list for err in p_errs]
+        
         st.write(
             f"Jumlah isu aktif yang disahkan untuk dilaporkan: **{len(detected_issues)} isu**"
         )
         st.subheader("🔍 Mod Semakan & Pratonton Visual")
 
+        # 📌 MASTER TOGGLE: Bypass Semua Muka Surat Sekaligus
+        bypass_all_doc = st.checkbox(
+            "🌐 Abaikan Semua Isu Dokumen (Bypass All Pages)",
+            value=st.session_state.get("bypass_all_doc", False),
+            key="bypass_all_doc",
+            help="Tanda di sini jika anda mahu mengabaikan semua isu yang dikesan di seluruh muka surat sekaligus."
+        )
+
         for page_num in range(len(doc)):
             unique_page_errors = all_pages_errors_list[page_num]
             is_landscape = doc[page_num].rect.width > doc[page_num].rect.height
 
-            # 📌 1. KIRA JUMLAH ISU AKTIF (TIDAK DIABAIKAN)
-            active_error_count = sum(
-                1 for i in range(len(unique_page_errors))
-                if f"p{page_num+1}_{i}" not in st.session_state.ignored_errors
-            )
+            # 📌 1. KIRA JUMLAH ISU AKTIF (BERASASKAN MASTER TOGGLE & IGNORED ERRORS)
+            if bypass_all_doc:
+                active_error_count = 0  # Jika Master Toggle AKTIF, paksa isu jadi 0
+            else:
+                active_error_count = sum(
+                    1 for i in range(len(unique_page_errors))
+                    if f"p{page_num+1}_{i}" not in st.session_state.ignored_errors
+                )
 
             # 📌 2. PAPARKAN BILANGAN ISU PADA TAJUK EXPANDER
             if active_error_count > 0:
@@ -2205,20 +3051,16 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
 
             tag_landscape = " [Landscape]" if is_landscape else ""
 
-            # 📌 LANGKAH 3: KIRA JUMLAH ISU AKTIF & SET KAN STATUS_ICON
-            active_error_count = sum(
-                1 for i in range(len(unique_page_errors))
-                if f"p{page_num+1}_{i}" not in st.session_state.ignored_errors
-            )
-            status_icon = f"⚠️ Ada Isu: {active_error_count}" if active_error_count > 0 else "✅ Baik / Disemak"
-
-            with st.expander(
-                f"Muka Surat {page_num + 1}{tag_landscape} - ({status_icon})"
-            ):
-                col_img, col_details = st.columns([1, 1])
-                
-                # Buat salinan berasingan untuk render pratonton visual
+            with st.expander(f"Muka Surat {page_num + 1}{tag_landscape} - ({status_icon})"):
                 doc_page = doc[page_num]
+
+                col_img, col_details = st.columns([1, 1])
+                # 📌 3. JIKA MASTER TOGGLE DI-TICK, TUNJUK MESEJ MAKLUMAT (OPTIONAL)
+                if bypass_all_doc:
+                    st.info("🌐 Semua isu untuk muka surat ini telah diabaikan (Master Bypass Aktif).")
+                else:
+                    col_img, col_details = st.columns([1, 1])
+                    doc_page = doc[page_num]
 
                 # =========================================================================
                 # 📌 LUKIS KOTAK SEMPADAN SAIZ A4 KABUR (PAGE BORDER)
@@ -2234,14 +3076,22 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                 shape_a4.commit()
 
                 # Lukis kotak ralat sementara hanya untuk ralat yang TIDAK DIABAIKAN
+                # ✅ KOD BAHARU (Melukis KESEMUA bboxes jika ada):
                 for i, err in enumerate(unique_page_errors):
                     err_id = f"p{page_num+1}_{i}"
-                    if err.get("bbox") and err_id not in st.session_state.ignored_errors:
-                        # Guna shape overlay supaya tidak merosakkan struktur teks PDF asal
-                        shape = doc_page.new_shape()
-                        shape.draw_rect(err["bbox"])
-                        shape.finish(color=(1, 0, 0), width=1.5)
-                        shape.commit()
+                    if err_id not in st.session_state.ignored_errors:
+                        
+                        # 📌 1. Semak jika ada senarai 'bboxes' (dikampoi) atau 'bbox' (tunggal)
+                        bboxes_to_draw = err.get("bboxes", [])
+                        if not bboxes_to_draw and err.get("bbox"):
+                            bboxes_to_draw = [err["bbox"]]
+
+                        # 📌 2. Gelung untuk melukis KESEMUA kotak merah bagi isu ini
+                        for b in bboxes_to_draw:
+                            shape = doc_page.new_shape()
+                            shape.draw_rect(b)
+                            shape.finish(color=(1, 0, 0), width=1.5)
+                            shape.commit()
 
                 # Render imej pratonton (sekarang sudah ada garisan sempadan A4 & kotak ralat)
                 pix = doc_page.get_pixmap(dpi=120)

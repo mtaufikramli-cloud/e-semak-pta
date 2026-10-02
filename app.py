@@ -2966,6 +2966,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
         # 📌 🚀 PANGGIL FUNGSI SEMAKAN UTAMA DI SINI!
         # =========================================================
         # Panggil fungsi dengan hantar nilai checkbox aktifkan_spacing
+        aktifkan_spacing = False
         senarai_ralat = semak_keseluruhan_dokumen(doc, aktifkan_spacing=aktifkan_spacing)
 
         # Simpan keputusan ralat ke dalam session state supaya tidak hilang bila click button

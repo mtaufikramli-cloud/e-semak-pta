@@ -25,7 +25,7 @@ from supabase import create_client
 # =========================================================
 # TETAPAN VERSI SISTEM (Tukar di sini sahaja!)
 # =========================================================
-APP_VERSION = "1.3.1"  # Set versi Fasa 2 anda di sini
+APP_VERSION = "1.4.0"  # Set versi Fasa 2 anda di sini
 
 def semak_saiz_kertas(page, toleransi_pt=3.0):
     """Semak saiz kertas mesti A4 (210 x 297mm), potret atau landskap."""
@@ -97,8 +97,10 @@ def semak_saiz_kertas(
     """Semak sama ada muka surat menggunakan saiz A4 (210mm x 297mm)."""
     PT_TO_MM = 25.4 / 72.0
 
-    page_width_mm = page.rect.width * PT_TO_MM
-    page_height_mm = page.rect.height * PT_TO_MM
+    # Landscape juga A4: bandingkan sisi pendek dengan sisi pendek
+    page_width_mm, page_height_mm = sorted(
+        (page.rect.width * PT_TO_MM, page.rect.height * PT_TO_MM)
+    )
 
     width_diff = abs(page_width_mm - target_width_mm)
     height_diff = abs(page_height_mm - target_height_mm)
@@ -549,21 +551,27 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
 
     MM_TO_PT = 72.0 / 25.4
     TARGET_MARGIN_LEFT_PT = 40.0 * MM_TO_PT  # Margin Kiri 40mm
+    dalam_rujukan = False   # sudah jumpa tajuk RUJUKAN (untuk muka surat sambungan)
+    senarai_abjad = []      # (muka surat, kumpulan, teks, bbox) merentas semua muka surat
+    kumpulan_semasa = 0     # bertambah setiap kali jumpa tajuk bahagian (Internet/Buku/...)
 
     for page_idx, page in enumerate(doc):
         page_num = page_idx + 1
         page_width = page.rect.width
         text_upper = page.get_text().upper()
 
-        if any(kw in text_upper for kw in SKIP_PAGE_KEYWORDS):
+        ada_tajuk_rujukan = "RUJUKAN" in text_upper or "BIBLIOGRAFI" in text_upper
+        muka_sambungan = dalam_rujukan and not ada_tajuk_rujukan
+
+        if any(kw in text_upper for kw in SKIP_PAGE_KEYWORDS) and not muka_sambungan:
             continue
 
-        if "RUJUKAN" in text_upper or "BIBLIOGRAFI" in text_upper:
-            
+        if ada_tajuk_rujukan or dalam_rujukan:
+
             text_page = page.get_text("dict")
 
             raw_lines = []
-            is_after_heading = False
+            is_after_heading = dalam_rujukan  # muka surat sambungan terus mula
 
             for block in text_page.get("blocks", []):
                 if block.get("type", 0) != 0:
@@ -585,6 +593,7 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
                         "BIBLIOGRAFI",
                     ]:
                         is_after_heading = True
+                        dalam_rujukan = True
 
                         # 📌 SUIS TOGGLE: HANYA SEMAK JIKA 'semak_tajuk_center' ADALAH TRUE
                         if semak_tajuk_center:
@@ -601,6 +610,16 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
                                     ),
                                     "bbox": (x0, y0, x1, y1),
                                 })
+                        continue
+
+                    # Tamat bahagian rujukan bila jumpa LAMPIRAN
+                    if line_text.upper().startswith(("LAMPIRAN", "APPENDIX")):
+                        is_after_heading = False
+                        dalam_rujukan = False
+                        continue
+
+                    # Abaikan nombor muka surat (cth: "61" atau "iv")
+                    if re.fullmatch(r"\d{1,3}|[ivxlc]{1,6}", line_text, re.IGNORECASE):
                         continue
 
                     if is_after_heading:
@@ -734,6 +753,11 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
 
                 entry_issues = []
 
+                # Tajuk bahagian ("Internet", "Buku", "Jurnal"...) bukan entri rujukan
+                if entry_text.strip().lower() in _TAJUK_BAHAGIAN:
+                    kumpulan_semasa += 1
+                    continue
+
                 # 1. URL Mentah Terpencil
                 if len(entry_lines) <= 2 and all(
                     is_url_link(l) or is_url_continuation(l) for l in entry_lines
@@ -769,6 +793,15 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
                         "bbox": entry_bbox,
                     })
                     continue
+
+                # Simpan untuk semakan abjad (dibuat selepas semua muka surat)
+                senarai_abjad.append(
+                    (page_num, kumpulan_semasa, entry_text, entry_bbox)
+                )
+
+                # 2b. Awalan "Web:" sebelum URL (bukan format APA)
+                if re.search(r"\bWeb\s*:\s*(https?://|www\.)", entry_text, re.IGNORECASE):
+                    entry_issues.append("menggunakan awalan 'Web:' (tulis URL terus tanpa 'Web:')")
 
                 # 3. Penggunaan Nombor
                 num_match = re.match(r"^(\d+)[\.\)]", entry_text)
@@ -806,6 +839,33 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
                         ),
                         "bbox": entry_bbox,
                     })
+
+    # 📌 SEMAK SUSUNAN ABJAD (A-Z) MERENTAS MUKA SURAT, ASING MENGIKUT KUMPULAN
+    def _kunci_abjad(txt):
+        t = re.sub(r"^(\d{1,3}[\.\)]|\[\d{1,3}\])\s*", "", txt.strip())
+        t = t.split("(", 1)[0] if "(" in t[:80] else t[:40]
+        return re.sub(r"[^a-z]", "", t.lower())
+
+    _sebelum = {}
+    for _pg, _kmp, _txt, _bb in senarai_abjad:
+        _kunci = _kunci_abjad(_txt)
+        if not _kunci:
+            continue
+        _prev = _sebelum.get(_kmp)
+        if _prev and _kunci < _prev[0]:
+            _a = _txt[:30] + "..." if len(_txt) > 30 else _txt
+            _b = _prev[1][:30] + "..." if len(_prev[1]) > 30 else _prev[1]
+            errors.append({
+                "page": _pg,
+                "page_num": _pg,
+                "muka_surat": _pg,
+                "msg": (
+                    f"Susunan Rujukan Salah: '{_a}' sepatutnya diletakkan sebelum"
+                    f" '{_b}' (wajib Abjad A-Z)."
+                ),
+                "bbox": _bb,
+            })
+        _sebelum[_kmp] = (_kunci, _txt)
 
     return errors
 
@@ -894,6 +954,10 @@ def is_toc_page(page, skip_keywords=None):
             words = line_text.split()
             last_word = words[-1] if words else ""
             ends_with_page_num = is_valid_page_str(last_word)
+            # Nombor halaman mungkin melekat pada teks (jurang tab tanpa ruang):
+            # semak teks span terakhir secara berasingan
+            if not ends_with_page_num and len(spans) >= 2:
+                ends_with_page_num = is_valid_page_str(spans[-1].get("text", ""))
 
             # C. Ada jurang/tab kosong ke kanan (> 30pt / ~1cm)
             has_large_gap = False
@@ -917,8 +981,14 @@ def is_toc_page(page, skip_keywords=None):
                 toc_pattern_count += 1
 
     # Jika sekurang-kurangnya 50% baris memenuhi struktur Isi Kandungan
-    if total_valid_lines >= 3 and (toc_pattern_count / total_valid_lines) >= 0.50:
-        return True
+    if total_valid_lines >= 3:
+        nisbah = toc_pattern_count / total_valid_lines
+        # ToC biasa: sekurang-kurangnya 4 baris corak ToC dan nisbah >= 25%
+        if toc_pattern_count >= 4 and nisbah >= 0.25:
+            return True
+        # Ekor ToC pendek: sedikit baris tetapi hampir semuanya corak ToC
+        if toc_pattern_count >= 2 and nisbah >= 0.60:
+            return True
 
     return False
 
@@ -1024,6 +1094,44 @@ def semak_penomboran_gppta(doc):
         page_num_display = page_idx + 1
         page_width = page.rect.width
         page_height = page.rect.height
+
+        # Landscape: nombor diputar 90° (orientasi disemak di tempat lain).
+        # Kedudukan 'bawah kanan' potret tak terpakai, jadi semak nilai nombor sahaja.
+        if page_width > page_height:
+            if tajuk_dalam_idx < page_idx < bab1_page_idx:
+                _jangka = int_to_roman((page_idx - tajuk_dalam_idx) + 1).lower()
+            elif page_idx >= bab1_page_idx and not (
+                lampiran_idx is not None and page_idx >= lampiran_idx
+            ):
+                _jangka = str((page_idx - bab1_page_idx) + 1)
+            else:
+                continue
+
+            _ditemui = False
+            for _b in page.get_text("dict").get("blocks", []):
+                for _l in _b.get("lines", []):
+                    _t = "".join(
+                        s.get("text", "") for s in _l.get("spans", [])
+                    ).strip().strip(" -().[]").lower()
+                    if _t == _jangka:
+                        _x0, _y0, _x1, _y1 = _l["bbox"]
+                        if (
+                            _x0 < page_width * 0.2 or _x1 > page_width * 0.8
+                            or _y0 < page_height * 0.2 or _y1 > page_height * 0.8
+                        ):
+                            _ditemui = True
+            if not _ditemui:
+                errors.append({
+                    "page": page_num_display,
+                    "page_num": page_num_display,
+                    "muka_surat": page_num_display,
+                    "msg": (
+                        f"Nombor muka surat sepatutnya '{_jangka}' (landscape:"
+                        " nombor diputar 90° di tepi muka surat)."
+                    ),
+                    "bbox": None,
+                })
+            continue        
 
         footer_items = []
         text_page = page.get_text("dict")
@@ -1244,6 +1352,20 @@ def paparkan_log_kemaskini():
     st.markdown(f"### v{APP_VERSION}")
     st.markdown(
         """
+    * **Semakan Senarai Rujukan APA Diperkukuh:** Semakan susunan abjad (A-Z) kini dikesan secara automatik dan diasingkan mengikut kumpulan (Internet, Buku, Jurnal). Semakan merentas **semua muka surat Rujukan** (termasuk muka surat sambungan) sehingga bahagian Lampiran. Awalan *'Web:'* sebelum URL kini dilaporkan sebagai format bukan APA.
+    * **Pengurangan Isu Palsu Rujukan:** Tajuk bahagian (*Internet, Buku, Jurnal*) dan nombor muka surat tidak lagi dilaporkan sebagai entri rujukan atau nota kasar.
+    * **Pengesanan Lanskap Lebih Tepat:** Kertas A4 dalam kedudukan lanskap tidak lagi dikesan sebagai saiz salah. Semakan penomboran muka surat lanskap kini menyemak nilai nombor sahaja (nombor diputar 90° mengikut format jilid), tanpa menganggap kertas sebagai potret.
+    * **Margin Atas Tanpa Duplikasi:** Isu margin atas teks tidak lagi dilaporkan dua kali dan jarak kini dipaparkan dalam unit mm yang betul.
+    * **Kotak Amaran Imej Lebih Tepat:** Kotak merah margin atas bagi imej/carta kini dilukis pada jalur lebihan sahaja (dari tepi atas imej hingga garisan margin).
+    * **Label Jadual vs Rajah Lebih Pintar:** Sistem kini mengesan tajuk berlabel *Jadual* yang diikuti imej atau grafik di bawahnya (bukan jadual sebenar) dan mencadangkan label *Rajah* dengan tajuk di bawah objek, sambil mengabaikan jadual sebenar bagi mengelakkan isu palsu.
+    """
+    )
+
+    st.divider()
+
+    st.markdown("### v1.3.1")
+    st.markdown(
+        """
     * **Pengesanan Pintar Tajuk Jadual & Rajah:** Penambahbaikan logik pengecaman objek visual (jadual teks, imej, dan grafik vektor/carta). Sistem kini berupaya membezakan jadual sebenar daripada carta/grafik untuk menyemak kedudukan tajuk serta mengesan kesalahan label secara tepat (contoh: penggunaan label *Jadual* pada *Carta/Graf*).
     * **Pemurnian Kotak Amaran Margin:** Kotak merah amaran margin kini digariskan tepat pada jalur lebihan sahaja (dilukis sehingga garisan margin 40mm/25mm) bagi elak menutupi carta alir atau teks di tengah dokumen.
     * **Kawalan & Reset Memori Bypass:** Penambahbaikan integrasi master bypass dan butang reset semula status isu diabaikan.
@@ -1293,7 +1415,7 @@ def semak_justify_perenggan(
     ignore_keywords_clean = [
         "PERAKUANPENULIS",
         "PENGESAHAN",
-        "PENGHARGAAN",
+        #"PENGHARGAAN",
         "SENARAISINGKATAN",
         "SENARAIJADUAL",
         "SENARAIRAJAH",
@@ -1371,8 +1493,21 @@ def semak_justify_perenggan(
                 return True
         return False
 
-    text_page = page.get_text("dict")
+    # rawdict: setiap aksara ada bbox sendiri (supaya ruang kosong di hujung
+    # baris tidak dikira sebagai teks terkeluar margin)
+    text_page = page.get_text("rawdict")
     all_valid_lines = []
+    marker_lines = []
+
+    # Penanda senarai yang berdiri sendiri: "i." "ii." "a)" "1." "•" dsb.
+    marker_re = re.compile(
+        r"^(\(?([ivxlcdm]{1,6}|[a-zA-Z]|\d{1,2})[\.\)]|[•▪●○\-–])$",
+        re.IGNORECASE,
+    )
+    # Penanda senarai pada permulaan baris yang sama: "iii. Teks ..."
+    inline_marker_re = re.compile(
+        r"^\(?([ivxlcdm]{1,6}|[a-zA-Z]|\d{1,2})[\.\)]\s+\S", re.IGNORECASE
+    )
 
     # -----------------------------------------------------------------
     # 2. KUMPUL SEMUA BARIS TEKS UTAMA
@@ -1382,7 +1517,23 @@ def semak_justify_perenggan(
             continue
 
         for line in block.get("lines", []):
-            bbox = line["bbox"]
+            line_bbox = line["bbox"]
+
+            chars = []
+            for s in line.get("spans", []):
+                chars.extend(s.get("chars", []))
+            if not chars:
+                continue
+
+            # Buang ruang kosong di hujung baris & tepatkan tepi kanan baris
+            n = len(chars)
+            while n > 0 and chars[n - 1]["c"].isspace():
+                n -= 1
+            if n == 0:
+                continue
+
+            teks = "".join(c["c"] for c in chars[:n]).strip()
+            bbox = (line_bbox[0], line_bbox[1], chars[n - 1]["bbox"][2], line_bbox[3])
 
             # Abaikan Header / Footer (Top/Bottom Margin)
             if bbox[1] < 45.0 or bbox[3] > (page_height - 45.0):
@@ -1394,11 +1545,10 @@ def semak_justify_perenggan(
             if is_in_shape(bbox):
                 continue
 
-            spans = line.get("spans", [])
-            if not spans:
+            # Penanda senarai berdiri sendiri (cth. "iii.") - simpan kedudukan
+            if marker_re.match(teks):
+                marker_lines.append(bbox)
                 continue
-
-            teks = "".join([s.get("text", "") for s in spans]).strip()
 
             # Tapis Tajuk Sub-bab / Bab (Kalis Capital & Lowercase: BAB 4, Bab 4, bab 4, 4.1, dll)
             is_heading = re.match(
@@ -1415,7 +1565,24 @@ def semak_justify_perenggan(
             )
 
             if len(teks) >= 10 and not is_heading and not is_centered_heading:
-                all_valid_lines.append({"bbox": bbox, "text": teks})
+                all_valid_lines.append({
+                    "bbox": bbox,
+                    "text": teks,
+                    "item_start": bool(inline_marker_re.match(teks)),
+                })
+
+    # Tandakan baris yang merupakan permulaan item senarai (penanda di baris berasingan)
+    for l in all_valid_lines:
+        if l["item_start"]:
+            continue
+        for mb in marker_lines:
+            if (
+                abs(mb[1] - l["bbox"][1]) < 4.0
+                and mb[2] <= (l["bbox"][0] + 3.0)
+                and (l["bbox"][0] - mb[2]) < 80.0
+            ):
+                l["item_start"] = True
+                break
 
     if len(all_valid_lines) < 2:
         return []
@@ -1459,7 +1626,11 @@ def semak_justify_perenggan(
     max_x1 = max(l["bbox"][2] for l in lines_by_y)
     dikesan_margin_mm = (page_width - max_x1) * PT_TO_MM
 
-    if dikesan_margin_mm > (target_kanan_mm + tolerance_mm):
+    # Margin salah hanya dilaporkan jika BEBERAPA baris (bukan satu tajuk/baris pendek)
+    # berakhir pada kedudukan kanan yang sama
+    kluster_kanan = [l for l in lines_by_y if l["bbox"][2] >= max_x1 - 3.0]
+
+    if len(kluster_kanan) >= 3 and dikesan_margin_mm > (target_kanan_mm + tolerance_mm):
         min_y0 = min(l["bbox"][1] for l in lines_by_y)
         max_y1 = max(l["bbox"][3] for l in lines_by_y)
 
@@ -1489,7 +1660,15 @@ def semak_justify_perenggan(
             (".", ":", ";", "?")
         )
 
-        if v_gap < 14.0 and same_left and not ends_with_punctuation:
+        # Baris sebelum item senarai baharu = hujung item, bukan sambungan perenggan
+        next_is_item = next_l.get("item_start", False)
+
+        if (
+            v_gap < 14.0
+            and same_left
+            and not ends_with_punctuation
+            and not next_is_item
+        ):
             middle_lines.append(curr)
 
     if not middle_lines:
@@ -1521,11 +1700,22 @@ def semak_justify_perenggan(
 
         gap_bbox = (min_unjust_x1, min_y, target_margin_pt, max_y)
 
-        ralat.append({
-            "msg": (
+        sebaran_pt = max(l["bbox"][2] for l in unjustified_lines) - min_unjust_x1
+        if len(unjustified_lines) >= 2 and sebaran_pt <= justify_tolerance_pt:
+            # Baris selaras sesama sendiri (justified) tetapi tidak sampai margin
+            msg_justify = (
+                "Teks 'Justified' tetapi tidak mencapai margin kanan"
+                f" {target_kanan_mm:.0f}mm: berakhir {max_selisih_mm:.1f}mm sebelum margin."
+                " Sila semak Right Indent / margin kanan perenggan."
+            )
+        else:
+            msg_justify = (
                 "Penjajaran teks tidak 'Justified': Tebing kanan tidak"
                 f" selaras ({max_selisih_mm:.1f}mm dari margin)."
-            ),
+            )
+
+        ralat.append({
+            "msg": msg_justify,
             "bbox": gap_bbox,
         })
 
@@ -1547,7 +1737,11 @@ def semak_justify_perenggan(
             o_purata = sum(o_x1) / len(o_x1)
             beza_pt = o_purata - u_purata
 
-            if u_rapat and o_rapat and beza_pt > justify_tolerance_pt:
+            # Kumpulan yang melepasi mestilah juga tidak tepat di margin sasaran
+            # (jika sudah di margin 25mm, ia betul - kumpulan satu lagi yang pendek)
+            o_jauh_dari_margin = (target_margin_pt - o_purata) > 3.0
+
+            if u_rapat and o_rapat and o_jauh_dari_margin and beza_pt > justify_tolerance_pt:
                 min_y2 = min(l["bbox"][1] for l in ok_lines)
                 max_y2 = max(l["bbox"][3] for l in ok_lines)
                 gap_bbox2 = (
@@ -1989,6 +2183,63 @@ def check_margin_kanan_violations(
 
     return errors
 
+def _grafik_di_bawah_tajuk(page, caption_bbox, jarak_maks=350):
+    """True jika objek di BAWAH tajuk ialah imej/grafik (bitmap, anak panah,
+    lengkung), iaitu bukan jadual."""
+    c_x0, c_y0, c_x1, c_y1 = caption_bbox
+    zon = fitz.Rect(
+        0, c_y1 - 2, page.rect.width, min(page.rect.height, c_y1 + jarak_maks)
+    )
+
+    # Berhenti di tajuk Jadual/Rajah seterusnya (jika ada) di bawah
+    for b in page.get_text("dict").get("blocks", []):
+        if b.get("type") == 0 and b["bbox"][1] > c_y1 + 5:
+            t = " ".join(
+                s["text"] for l in b.get("lines", []) for s in l["spans"]
+            ).strip()
+            if re.match(r"^(Jadual|Rajah)\s+\d", t, re.IGNORECASE):
+                zon.y1 = min(zon.y1, b["bbox"][1])
+
+    # Jadual sebenar di bawah tajuk: objek yang bertindih dengannya diabaikan
+    kawasan_jadual = []
+    try:
+        for tab in page.find_tables():
+            tr = fitz.Rect(tab.bbox)
+            if tr.intersects(zon) and (tr.y0 - c_y1) < 120:
+                kawasan_jadual.append(
+                    fitz.Rect(tr.x0 - 3, tr.y0 - 3, tr.x1 + 3, tr.y1 + 3)
+                )
+    except Exception:
+        pass
+
+    def _sah(r):
+        # Mesti bermula DI BAWAH tajuk, bukan saiz muka surat penuh,
+        # dan tidak bertindih dengan jadual sebenar
+        return (
+            r.intersects(zon)
+            and r.y0 >= c_y1 - 2
+            and r.width < page.rect.width * 0.95
+            and r.height < page.rect.height * 0.95
+            and not any(tr.intersects(r) for tr in kawasan_jadual)
+        )
+
+    # 1. Imej bitmap
+    for img in page.get_image_info():
+        if _sah(fitz.Rect(img["bbox"])):
+            return True
+
+    # 2. Grafik vektor (lengkung / poligon berwarna seperti anak panah)
+    for d in page.get_drawings():
+        r = fitz.Rect(d["rect"])
+        if not _sah(r):
+            continue
+        jenis = [it[0] for it in d.get("items", [])]
+        if "c" in jenis:
+            return True
+        if d.get("fill") is not None and jenis.count("l") >= 5:
+            return True
+
+    return False
 
 def semak_kedudukan_tajuk_jadual(page):
     """Semak jika tajuk Jadual diletakkan di BAWAH jadual (Mesti di ATAS)
@@ -2079,6 +2330,24 @@ def semak_kedudukan_tajuk_jadual(page):
                     if 0 <= dist < min_dist_below:
                         min_dist_below = dist
 
+            # KES 3: tajuk 'Jadual' tetapi objek di BAWAH ialah imej/grafik (bukan jadual)
+            if not is_real_table_above and _grafik_di_bawah_tajuk(page, caption_bbox):
+                tajuk_short = (
+                    full_block_text[:35] + "..."
+                    if len(full_block_text) > 35
+                    else full_block_text
+                )
+                errors.append({
+                    "msg": (
+                        f"Salah Label Objek: Tajuk '{tajuk_short}' bermula dengan"
+                        " 'Jadual', tetapi objek di bawahnya dikesan sebagai"
+                        " Imej/Rajah (bukan jadual). Sepatutnya dinamakan"
+                        " 'Rajah X.X' dan tajuk diletakkan di BAWAH objek."
+                    ),
+                    "bbox": caption_bbox,
+                })
+                continue
+            
             # JIKA ADA JADUAL / GARISAN / OBJEK DI ATAS TAJUK (Jarak < 250pt) DAN TIADA OBJEK DI BAWAH
             if (
                 is_real_table_above or min_dist_above < 250
@@ -2416,31 +2685,48 @@ PT_TO_MM = 25.4 / 72.0
 MM_TO_PT = 72.0 / 25.4
 
 def check_margin_atas_violations(
-    page, target_margin_mm=30, tolerance_mm=TOLERANCE_MM
+    page, target_margin_mm=25.0, tolerance_mm=0.0
 ):
     errors = []
-
-    # 📌 BETULKAN FORMULA: Tukar (mm) ke (pt) dengan mendarab MM_TO_PT (atau bahagi PT_TO_MM)
     limit_pt = (target_margin_mm - tolerance_mm) * MM_TO_PT
     text_page = page.get_text("dict")
 
+    # Set untuk mencegah duplikasi baris teks yang sama
+    processed_lines = set()
+
     for block in text_page.get("blocks", []):
+        if block.get("type", 0) != 0:
+            continue
+
         for line in block.get("lines", []):
             x0, y0, x1, y1 = line["bbox"]
             line_text = "".join(
                 [s.get("text", "") for s in line.get("spans", [])]
             ).strip()
 
-            # Jika kedudukan Y0 (atas) lebih kecil daripada had limit margin
-            if y0 < limit_pt and line_text:
-                if not is_page_number(line_text):
-                    msg = format_margin_msg(
-                        "Teks", line_text, y0, target_margin_mm, "Atas"
-                    )
-                    errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+            if not line_text or is_page_number(line_text):
+                continue
+
+            if "ABSTRACT" in line_text.upper():
+                print("DEBUG ATAS:", round(y0, 1), round(limit_pt, 1), flush=True)
+
+            # Hindari memproses teks/baris yang sama lebih dari sekali
+            line_key = (round(y0, 1), line_text)
+            if line_key in processed_lines:
+                continue
+
+            # Cek jika posisi y0 (atas) melebihi batas margin
+            if y0 < limit_pt:
+                y0_mm = y0 * PT_TO_MM  # Konversi pt ke mm
+
+                msg = format_margin_msg(
+                    "Teks", line_text, y0_mm, target_margin_mm, "Atas"
+                )
+                errors.append({"bbox": (x0, y0, x1, y1), "msg": msg})
+
+                processed_lines.add(line_key)
 
     return errors
-
 
 def check_margin_bawah_violations(
     page, target_margin_mm=25, tolerance_mm=TOLERANCE_MM
@@ -4478,6 +4764,9 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
         is_previous_list_page = False
         in_appendix_section = False
 
+        # Muka surat sebelum Halaman Tajuk Dalam = kulit depan (boleh lebih daripada satu)
+        idx_tajuk_dalam, _ = get_document_zones(doc)
+
         # IMBASAN GELUNG (PAGE LOOP)
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -4515,9 +4804,15 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                 "list of figures"
             ]
 
-            is_cover_page = (page_num == 0)
-            is_appendix_page = any(
-                k in page_text_lower for k in ["appendix", "appendices", "lampiran"]
+            is_cover_page = (page_num == 0) or (page_num < idx_tajuk_dalam)
+            # Muka surat Lampiran: tajuk "LAMPIRAN ..." / "APPENDIX ..." di bahagian atas
+            # (bukan sekadar perkataan 'lampiran' dalam ayat perenggan)
+            _baris_atas = [
+                l.strip().upper() for l in page_text_lower.split("\n") if l.strip()
+            ][:3]
+            is_appendix_page = in_appendix_section or any(
+                l.startswith(("LAMPIRAN", "APPENDIX", "APPENDICES")) and len(l) < 60
+                for l in _baris_atas
             )
             # Mengesan M/S Isi Kandungan (termasuk M/S sambungan tanpa tajuk)
             is_front_matter = is_toc_page(page, skip_justify_keywords)
@@ -4547,7 +4842,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             # 📌 3. SEMAKAN MARGIN (4 SISI)
             # ---------------------------------------------------------
             page_errors.extend(check_margin_kiri_violations(page, target_margin_mm=target_kiri_mm))
-            page_errors.extend(check_margin_atas_violations(page, target_margin_mm=target_atas_mm))
+            # page_errors.extend(check_margin_atas_violations(page, target_margin_mm=target_atas_mm))
             page_errors.extend(check_margin_kanan_violations(page, target_margin_mm=target_kanan_mm))
             page_errors.extend(check_margin_bawah_violations(page, target_margin_mm=target_bawah_mm))
 
@@ -4685,8 +4980,10 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                     
                     # Semak jika imej melangkaui Margin Atas
                     if iy0 < (cur_m_top - 2):
-                        msg = format_margin_msg("Imej/Gambar", "", iy0, target_top_mm, "Atas")
-                        page_errors.append({"msg": msg, "bbox": (ix0, iy0, ix1, iy1)})
+                        msg = format_margin_msg("Imej/Gambar", "", iy0 * 25.4 / 72.0, target_top_mm, "Atas")
+                        # Lukis kotak merah hanya pada bahagian yang melepasi margin atas
+                        bawah_lebih = min(iy1, cur_m_top)
+                        page_errors.append({"msg": msg, "bbox": (ix0, iy0, ix1, bawah_lebih)})
                         
                     # Semak jika imej melangkaui Margin Bawah
                     if iy1 > (cur_m_bottom + 2):
@@ -4766,9 +5063,9 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                                 msg = format_margin_msg("Teks", full_line_text, y1, target_bottom_mm, "Bawah")
                                 page_errors.append({"msg": msg, "bbox": bbox})
 
-                            # 📌 2. Semakan Ralat Margin Atas (Kemaskini dengan MM)
+                            # 📌 2. Semakan Ralat Margin Atas (dalam mm)
                             if y0 < (cur_m_top - 2):
-                                msg = format_margin_msg("Teks", full_line_text, y0, target_top_mm, "Atas")
+                                msg = format_margin_msg("Teks", full_line_text, y0 * 25.4 / 72.0, target_top_mm, "Atas")
                                 page_errors.append({"msg": msg, "bbox": bbox})
 
                             # Semakan Jenis & Saiz Font
@@ -4871,7 +5168,7 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
             # SEMAKAN KEHADIRAN NOMBOR MUKA SURAT
             if not in_appendix_section:
                 lines = [line.strip().upper() for line in full_page_text.split("\n") if line.strip()]
-                for line in lines:
+                for line in lines[:3]:
                     if (line.startswith("APPENDIX") or line.startswith("LAMPIRAN")) and len(line) < 60:
                         in_appendix_section = True
                         break

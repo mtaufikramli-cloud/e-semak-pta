@@ -5,3 +5,4 @@ Pillow>=10.0.0
 supabase
 PyMuPDF
 requests
+lingua-language-detector

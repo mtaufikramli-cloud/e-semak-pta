@@ -18,6 +18,7 @@ import urllib.request
 import urllib.parse
 from datetime import datetime, timezone, timedelta
 import time
+import secrets
 import threading
 import requests
 from supabase import create_client
@@ -26,6 +27,8 @@ from supabase import create_client
 # TETAPAN VERSI SISTEM (Tukar di sini sahaja!)
 # =========================================================
 APP_VERSION = "1.4.0"  # Set versi Fasa 2 anda di sini
+
+
 
 def semak_saiz_kertas(page, toleransi_pt=3.0):
     """Semak saiz kertas mesti A4 (210 x 297mm), potret atau landskap."""
@@ -2996,6 +2999,54 @@ def init_supabase():
 supabase = init_supabase()
 tetapan_semasa = ambil_tetapan_sistem()
 
+# =========================================================
+# 📌 PEMULIHAN SESI SELEPAS REFRESH (token rawak, disahkan di server)
+# =========================================================
+TEMPOH_SESI_SAAT = 12 * 60 * 60  # sesi tamat selepas 12 jam
+
+_KUNCI_SESI = threading.Lock()
+
+@st.cache_resource
+def _stor_sesi():
+    return {}  # {token: (user_id, masa_tamat)}
+
+def cipta_sesi(user_id):
+    stor = _stor_sesi()
+    sekarang = time.time()
+    token = secrets.token_urlsafe(32)
+    with _KUNCI_SESI:
+        for t in [t for t, (_, tamat) in list(stor.items()) if tamat < sekarang]:
+            stor.pop(t, None)  # buang token tamat tempoh
+        stor[token] = (user_id, sekarang + TEMPOH_SESI_SAAT)
+    st.query_params["sesi"] = token
+
+def padam_sesi():
+    token = st.query_params.get("sesi")
+    if token:
+        with _KUNCI_SESI:
+            _stor_sesi().pop(token, None)
+    if "sesi" in st.query_params:
+        del st.query_params["sesi"]
+
+if st.session_state["user"] is None:
+    _token = st.query_params.get("sesi")
+    if _token:
+        _rekod = _stor_sesi().get(_token)
+        if _rekod and _rekod[1] > time.time():
+            try:
+                _res = (
+                    supabase.table("pengguna")
+                    .select("*")
+                    .eq("id", _rekod[0])
+                    .execute()
+                )
+                if _res.data:
+                    st.session_state["user"] = _res.data[0]
+            except Exception:
+                pass  # kalau gagal, pengguna ke skrin log masuk seperti biasa
+        else:
+            del st.query_params["sesi"]  # token tak sah / tamat tempoh
+
 # --- PENETAPAN CONSTANT GLOBAL ---
 MM_TO_PT = 72 / 25.4
 
@@ -3291,6 +3342,7 @@ if st.session_state["user"] is None:
                         ):
                             # Simpan keseluruhan record (termasuk perlu_tukar_pass)
                             st.session_state["user"] = user_data
+                            cipta_sesi(user_data["id"])
                             st.success("Log masuk berjaya!")
                             st.rerun()
                         else:
@@ -3780,6 +3832,7 @@ with st.sidebar:
         mod_halaman = "📄 Semakan Laporan PTA"
 
     if st.button("🚪 Log Keluar", type="secondary", width="stretch"):
+        padam_sesi()
         st.session_state["user"] = None
         st.rerun()
 

@@ -4329,11 +4329,11 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                     <div>
                         <div style="font-weight: 700; color: #1e293b; font-size: 0.92rem; margin-bottom: 6px;">🔍 Semakan Automatik</div>
                         <p style="margin: 0; color: #64748b; font-size: 0.8rem; line-height: 1.4;">
-                            Mengesan margin, saiz fon, kedudukan tajuk/jadual, dan struktur muka surat mengikut piawaian GPPTA 2026.
+                            Mengesan margin, saiz fon, kedudukan tajuk/jadual, spacing, dan struktur muka surat mengikut piawaian GPPTA 2026.
                         </p>
                     </div>
                     <p style="font-size: 0.72rem; color: #6c757d; margin-top: 10px; margin-bottom: 0; line-height: 1.3;">
-                        <em>💡 <b>Nota:</b> Fungsi spacing, italic & format khas akan dikemaskini dalam versi akan datang.</em>
+                        <em>💡 <b>Nota:</b> Fungsi italic & format khas akan dikemaskini dalam versi akan datang.</em>
                     </p>
                 </div>
                 <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #d97706; box-shadow: 0 2px 6px rgba(0,0,0,0.04); display: flex; flex-direction: column;">

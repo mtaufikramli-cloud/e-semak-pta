@@ -5432,12 +5432,63 @@ elif mod_halaman == "📄 Semakan Laporan PTA":
                         st.write("**Senarai Isu Dikesan:**")
                         page_err_ids = []
 
+                        # 📌 Isu "Jarak baris terlalu rapat" dipaparkan sebagai 1 baris sahaja
+                        idx_rapat = [
+                            j for j, e in enumerate(unique_page_errors)
+                            if str(e.get("msg", "")).startswith("Jarak baris terlalu rapat")
+                        ]
+                        ids_rapat = [f"p{page_num+1}_{j}" for j in idx_rapat]
+
                         for i, err in enumerate(unique_page_errors):
                             err_id = f"p{page_num+1}_{i}"
                             page_err_ids.append(err_id)
                             is_ignored = err_id in st.session_state.get(
                                 "ignored_errors", set()
                             )
+
+                            if len(idx_rapat) > 1 and i in idx_rapat:
+                                if i != idx_rapat[0]:
+                                    continue  # sudah diwakili oleh baris gabungan
+                                _nisbah = [
+                                    float(m.group(1))
+                                    for j in idx_rapat
+                                    for m in [re.search(r"Nisbah: ([\d.]+)x", unique_page_errors[j]["msg"])]
+                                    if m
+                                ]
+                                _sampel = re.search(r"pada teks: '(.*)'", err["msg"])
+                                _msg_gabung = (
+                                    "Jarak baris terlalu rapat"
+                                    + (
+                                        f" (Nisbah: {min(_nisbah):.2f}x - {max(_nisbah):.2f}x, Sepatutnya 1.5x)"
+                                        if _nisbah else ""
+                                    )
+                                    + f" pada {len(idx_rapat)} kawasan teks."
+                                    + (f" Bermula: '{_sampel.group(1)}'" if _sampel else "")
+                                )
+                                _semua_diabaikan = all(
+                                    eid in st.session_state.get("ignored_errors", set())
+                                    for eid in ids_rapat
+                                )
+                                c_box, c_text = st.columns(
+                                    [1.2, 3], vertical_alignment="center"
+                                )
+                                with c_box:
+                                    st.checkbox(
+                                        "Abaikan (Byp...",
+                                        key=f"cb_rapat_p{page_num+1}",
+                                        value=_semua_diabaikan,
+                                        on_change=toggle_bypass_page,
+                                        args=(ids_rapat,),
+                                    )
+                                with c_text:
+                                    st.text_input(
+                                        label=f"label_rapat_p{page_num+1}",
+                                        value=_msg_gabung,
+                                        disabled=True,
+                                        label_visibility="collapsed",
+                                        key=f"txt_rapat_p{page_num+1}",
+                                    )
+                                continue
 
                             c_box, c_text = st.columns(
                                 [1.2, 3], vertical_alignment="center"

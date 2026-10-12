@@ -1,0 +1,15 @@
+name: Keep Streamlit Alive
+
+on:
+  schedule:
+    # Dijalankan setiap 6 jam
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Membenarkan pemicu manual dari GitHub UI
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          curl -s https://e-semak-pta.streamlit.app > /dev/null

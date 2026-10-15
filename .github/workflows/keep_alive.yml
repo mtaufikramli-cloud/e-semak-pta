@@ -2,8 +2,8 @@ name: Keep Streamlit Alive
 
 on:
   schedule:
-    # Dijalankan setiap 6 jam
-    - cron: '0 */6 * * *'
+    # Dijalankan setiap 15 minit
+    - cron: '*/15 * * * *'
   workflow_dispatch: # Membenarkan pemicu manual dari GitHub UI
 
 jobs:

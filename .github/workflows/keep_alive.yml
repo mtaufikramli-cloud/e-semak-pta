@@ -1,15 +1,50 @@
-name: Keep Streamlit Alive
+name: Auto Wake Streamlit App
 
 on:
   schedule:
-    # Dijalankan setiap 15 minit
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # Membenarkan pemicu manual dari GitHub UI
+    # Dijalankan setiap 2 jam
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
 
 jobs:
-  ping:
+  auto-wake:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Streamlit App
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Playwright
         run: |
-          curl -s https://e-semak-pta.streamlit.app > /dev/null
+          pip install playwright
+          playwright install chromium
+
+      - name: Open App and Auto Click Wake Button
+        run: |
+          python -c "
+          from playwright.sync_api import sync_playwright
+          import time
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              print('Membuka e-Semak PTA...')
+              try:
+                  page.goto('https://e-semak-pta.streamlit.app', timeout=60000)
+                  time.sleep(5)
+
+                  # Cari butang 'Yes, get this app back up!'
+                  button = page.query_selector('button:has-text(\"Yes, get this app back up!\")')
+                  if button:
+                      print('Dikesan mod Zzzz! Menekan butang bangunkan...')
+                      button.click()
+                      time.sleep(15)
+                      print('Berjaya mengejutkan Streamlit!')
+                  else:
+                      print('Aplikasi sedia ada aktif.')
+              except Exception as e:
+                  print(f'Ralat: {e}')
+              finally:
+                  browser.close()
+          "

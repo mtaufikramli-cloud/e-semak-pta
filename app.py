@@ -872,7 +872,6 @@ def semak_format_rujukan_apa(doc, semak_tajuk_center=False):
 
     return errors
 
-
 def int_to_roman(number):
     """Menukar nombor bulat kepada nombor Roman kecil."""
     if number <= 0:
@@ -3938,7 +3937,7 @@ with st.sidebar:
         check_line_spacing = (
             False  # Set default False supaya logik kod lain tidak error
         )
-        
+
 # =========================================================
 # 8. KAWALAN PAPARAN HALAMAN UTAMA (ADMIN VS SEMAKAN)
 # =========================================================
